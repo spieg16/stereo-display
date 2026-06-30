@@ -286,7 +286,12 @@ def clean_metadata_album_for_display(album):
     album = re.sub(
         r"\s*\(\s*"
         r"(?:"
-        r"(?:\d{4}\s+)?remaster(?:ed)?(?:\s+version)?(?:\s+\d{4})?"
+        r"(?:\d{4}\s+)?(?:digital\s+)?remaster(?:ed)?"
+        r"(?:\s+version)?(?:\s+\d{4})?"
+        r"|"
+        r"(?:expanded|deluxe|special|legacy|bonus\s+track)"
+        r"(?:\s*(?:&|and)\s*(?:remaster(?:ed)?|expanded|deluxe|special|legacy))*"
+        r"(?:\s+(?:edition|reissue|version|original\s+album\s+mix|album\s+mix|mix))?"
         r"|"
         r"(?:\d+(?:st|nd|rd|th)\s+anniversary\s+)?"
         r"(?:deluxe|expanded|bonus\s+track|special|legacy)"
