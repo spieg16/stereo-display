@@ -1,0 +1,649 @@
+import time
+from io import BytesIO
+
+import requests
+from PIL import Image
+
+import re
+
+# Spotify credentials live in a separate config file so secrets stay out of
+# the main application code.
+from spotify_config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+
+# Cached Spotify access token. Spotify client-credentials tokens are reusable
+# for about an hour, so this avoids requesting a new token for every artwork
+# lookup.
+_spotify_token = None
+_spotify_token_expires_at = 0
+
+
+def download_artwork_image(url):
+    # Return None instead of failing when there is no usable artwork URL.
+    if not url:
+        return None
+
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+
+    # Convert to RGB so pygame/Pillow handling is consistent regardless of the
+    # source image format.
+    return Image.open(BytesIO(response.content)).convert("RGB")
+
+
+def get_spotify_access_token():
+    global _spotify_token, _spotify_token_expires_at
+
+    now = time.time()
+
+    # Reuse the cached token until shortly before expiration.
+    if _spotify_token and now < _spotify_token_expires_at:
+        return _spotify_token
+
+    response = requests.post(
+        "https://accounts.spotify.com/api/token",
+        data={"grant_type": "client_credentials"},
+        auth=(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET),
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    data = response.json()
+
+    _spotify_token = data["access_token"]
+
+    # Subtract 60 seconds as a safety buffer so the app does not try to use a
+    # token right at the moment it expires.
+    _spotify_token_expires_at = now + data.get("expires_in", 3600) - 60
+
+    return _spotify_token
+
+
+def fetch_artwork_from_spotify_album_id(album_id):
+    # ACRCloud sometimes does not return Spotify metadata. In that case, let the
+    # caller fall back to another artwork source.
+    if not album_id:
+        return None
+
+    token = get_spotify_access_token()
+
+    response = requests.get(
+        f"https://api.spotify.com/v1/albums/{album_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    images = response.json().get("images", [])
+
+    if not images:
+        return None
+
+    # Spotify returns images largest-first in normal API responses.
+    return images[0]["url"]
+
+
+def fetch_artwork_from_itunes(artist, album_or_title):
+    # iTunes search is a fallback for cases where ACRCloud does not provide a
+    # Spotify album ID.
+    query = f"{artist} {album_or_title}"
+
+    response = requests.get(
+        "https://itunes.apple.com/search",
+        params={
+            "term": query,
+            "entity": "album",
+            "limit": 1,
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    results = response.json().get("results", [])
+
+    if not results:
+        return None
+
+    artwork_url = results[0].get("artworkUrl100")
+
+    if not artwork_url:
+        return None
+
+    # Request larger artwork than the default 100x100 thumbnail.
+    return artwork_url.replace("100x100bb", "600x600bb")
+
+
+def fetch_artwork_for_analog_result(result):
+    spotify_album_id = result.get("spotify_album_id")
+
+    # Prefer Spotify because ACRCloud often provides a precise album ID, which
+    # avoids bad text-search matches from compilation albums or alternate
+    # releases.
+    url = fetch_artwork_from_spotify_album_id(spotify_album_id)
+
+    if url:
+        return url
+
+    # Fall back to an iTunes text search if Spotify metadata is unavailable.
+    # Prefer album over title for artwork lookup. Track-title searches can
+    # easily land on the wrong release, especially for live albums where the
+    # same song also appears on studio albums, compilations, or remasters.
+    return fetch_artwork_from_itunes(
+        result.get("artist", ""),
+        result.get("album", "") or result.get("title", ""),
+    )
+
+
+def normalize_metadata_title_for_match(value):
+    value = normalize_metadata_text(value)
+
+    # Spotify sometimes appends a descriptive alias that ACRCloud omits,
+    # such as "Give Me Your Love (Love Song)". Ignore a trailing
+    # parenthetical only when it does not describe a distinct recording.
+    protected_variant_words = (
+        "live",
+        "reprise",
+        "part",
+        "alternate",
+        "take",
+        "outtake",
+        "acoustic",
+        "session",
+        "demo",
+        "version",
+        "mix",
+        "edit",
+        "instrumental",
+        "mono",
+        "stereo",
+    )
+
+    parenthetical_match = re.search(r"\s*\(([^()]*)\)\s*$", value)
+    if parenthetical_match:
+        parenthetical_text = parenthetical_match.group(1)
+        if not any(
+            re.search(rf"\b{re.escape(word)}\b", parenthetical_text)
+            for word in protected_variant_words
+        ):
+            value = value[: parenthetical_match.start()].strip()
+
+    # Remove common remaster suffixes.
+    #
+    # Examples:
+    #   Rusty Cage - Remastered 2016
+    #   Rusty Cage - Remastered
+    #   Rusty Cage - 2004 Remaster
+    #   Rusty Cage
+    value = re.sub(
+        r"\s*-\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return value
+
+
+# Convert an album title into meaningful comparison words for Spotify scoring.
+#
+# This is deliberately used only as a small tie-breaker when choosing among
+# otherwise strong Spotify candidates. It helps keep a candidate from an ACR
+# album like "Never Mind The Bollocks" from losing to an unrelated release such
+# as "Spunk" simply because both tracks share the same title/artist and the
+# unrelated release has an earlier Spotify release date.
+#
+# Generic release-format words are ignored so deluxe/remaster/bonus wording
+# does not make two versions of the same album look more similar than they are.
+def metadata_words(value):
+    value = normalize_metadata_text(value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return {
+        word
+        for word in value.split()
+        if len(word) > 2
+        and word
+        not in {
+            "the",
+            "and",
+            "deluxe",
+            "edition",
+            "bonus",
+            "track",
+            "remaster",
+            "remastered",
+        }
+    }
+
+
+# Detect obvious compilation-style album titles during Spotify scoring.
+#
+# Compilation candidates are not rejected outright, because sometimes the
+# compilation is the only available match. They are only penalized so a plausible
+# original/full-album candidate can win when Spotify returns both.
+def looks_like_compilation_album(album_name):
+    album_name = normalize_metadata_text(album_name)
+
+    compilation_patterns = [
+        r"\bbest\s+of\b",
+        r"\bvery\s+best\b",
+        r"\bgreatest\s+hits\b",
+        r"\bessential\b",
+        r"\banthology\b",
+        r"\bcollection\b",
+        r"\bcompilation\b",
+        r"\bsingles\b",
+    ]
+
+    return any(re.search(pattern, album_name) for pattern in compilation_patterns)
+
+
+# Remove generic release/version wording from titles before they are displayed.
+#
+# This catches remaster labels, Album Version, and LP Version suffixes. Do not
+# strip all parentheticals here. Parenthetical text can be meaningful, such as
+# "(Love Song)", "(Live)", "(Part 2)", or "(Alternate Take)".
+def clean_metadata_title_for_display(title):
+    title = (title or "").strip()
+
+    title = re.sub(
+        r"\s*\(\s*(?:\d{4}\s+)?"
+        r"(?:digital\s+)?"
+        r"remaster(?:ed)?"
+        r"(?:\s+version)?"
+        r"(?:\s+\d{4})?"
+        r"\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    title = re.sub(
+        r"\s*-\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    title = re.sub(
+        r"\s*\(\s*(?:album|lp)\s+version\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return title
+
+
+# Remove generic reissue/edition wording from album display names.
+#
+# This keeps album names like "Daydream Nation (Deluxe Edition)",
+# "Ultramega OK (Expanded Reissue)", "Déjà vu (2021 Remaster)", and
+# "Histoire De Melody Nelson - 40ème Anniversaire" from showing reissue
+# metadata on the CRT, while preserving meaningful album names such as
+# "Superfly (Original Soundtrack)".
+def clean_metadata_album_for_display(album):
+    album = (album or "").strip()
+
+    album = re.sub(
+        r"\s*\(\s*"
+        r"(?:"
+        r"(?:\d{4}\s+)?remaster(?:ed)?(?:\s+version)?(?:\s+\d{4})?"
+        r"|"
+        r"(?:\d+(?:st|nd|rd|th)\s+anniversary\s+)?"
+        r"(?:deluxe|expanded|bonus\s+track|special|legacy)"
+        r"(?:\s+(?:edition|reissue))?"
+        r")"
+        r"\s*\)$",
+        "",
+        album,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    album = re.sub(
+        r"\s*-\s*\d+(?:st|nd|rd|th|e|ème)?\s+anniversaire$",
+        "",
+        album,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return album
+
+
+# Normalize strings for metadata comparison.
+#
+# Spotify, ACRCloud, and other services may differ in capitalization,
+# spacing, or formatting. Convert to lowercase and collapse repeated
+# whitespace so comparisons are more reliable.
+def normalize_metadata_text(value):
+    return " ".join((value or "").lower().split())
+
+
+# Normalize artist names for strict primary-artist matching.
+#
+# This keeps the Spotify correction gate narrow while allowing harmless catalog
+# differences that ACRCloud sometimes returns, such as:
+#
+#   _GEORGE_HARRISON
+#   -> George Harrison
+#
+# and:
+#
+#   The Allman Brothers Band
+#   -> Allman Brothers Band
+#
+# Do not broaden this into fuzzy matching or secondary-artist matching. The
+# primary-artist gate is what prevents unrelated Spotify results from replacing
+# otherwise valid ACRCloud matches.
+def normalize_artist_for_match(value):
+    value = (value or "").replace("_", " ")
+    value = normalize_metadata_text(value)
+
+    if value.startswith("the "):
+        value = value[4:]
+
+    return value
+
+
+# Determine whether the ACRCloud artist and Spotify primary artist refer
+# to the same artist.
+#
+# Keep this as a primary-artist check. Do not accept matches where the ACR
+# artist only appears as a featured/secondary Spotify artist; that caused bad
+# corrections like:
+#
+#   Curtis Mayfield - Give Me Your Love
+#   -> $heem - GIVE ME YOUR LOVE
+#
+# Normalize case, spacing, and a leading "The" so harmless catalog differences
+# still match:
+#
+#   The Allman Brothers Band
+#   -> Allman Brothers Band
+#
+# This should stay narrow. Do not broaden it to fuzzy matching or "any artist"
+# matching unless there is a specific, tested reason.
+def spotify_artist_matches(acr_artist, spotify_artists):
+    if not spotify_artists:
+        return False
+
+    acr_artist = normalize_artist_for_match(acr_artist)
+    primary_spotify_artist = normalize_artist_for_match(
+        spotify_artists[0].get("name", "")
+    )
+
+    return acr_artist == primary_spotify_artist
+
+
+# Score a Spotify search result against an ACRCloud match.
+#
+# A strong match receives:
+#   50 points - exact track title match
+#   35 points - exact primary artist match
+#   15 points - Spotify album release, preferred over singles/EPs
+#   20 points - meaningful album-word overlap with the ACRCloud album
+#
+# Obvious compilation albums lose points. They can still win when no better
+# full-album candidate exists, but they should not beat a plausible original
+# album just because ACRCloud or Spotify points at a "best of" release.
+#
+# Album-word overlap is intentionally only a bonus, not a hard requirement.
+# ACRCloud can identify the correct recording with messy compilation/reissue
+# metadata, so Spotify should still be able to improve those cases when it has
+# a better album candidate.
+#
+# Current normal maximum score is 120 before any compilation penalty. Only
+# high-confidence matches should replace ACRCloud metadata.
+def score_spotify_track(acr_result, spotify_track):
+    score = 0
+
+    acr_title = normalize_metadata_title_for_match(acr_result.get("title", ""))
+    spotify_title = normalize_metadata_title_for_match(spotify_track.get("name", ""))
+
+    if acr_title == spotify_title:
+        score += 50
+
+    if spotify_artist_matches(
+        acr_result.get("artist", ""),
+        spotify_track.get("artists", []),
+    ):
+        score += 35
+
+    if spotify_track.get("album", {}).get("album_type") == "album":
+        score += 15
+
+    # Prefer candidates whose album title shares meaningful words with the ACR
+    # album, but require at least two shared words so a single generic word does
+    # not swing the result.
+    acr_album_words = metadata_words(acr_result.get("album", ""))
+    spotify_album_words = metadata_words(spotify_track.get("album", {}).get("name", ""))
+
+    if acr_album_words and spotify_album_words:
+        overlap = acr_album_words & spotify_album_words
+
+        if len(overlap) >= 2:
+            score += 20
+
+    spotify_album_name = spotify_track.get("album", {}).get("name", "")
+
+    # Penalize obvious compilations. They can still win when no better
+    # original-album candidate exists, but they should not beat a plausible
+    # full album just because Spotify/ACR metadata points at a "best of"
+    # release.
+    if looks_like_compilation_album(spotify_album_name):
+        score -= 30
+
+    return score
+
+
+# Search Spotify for a cleaner version of the ACRCloud match.
+#
+# ACRCloud often identifies the correct track but associates it
+# with compilation albums, remasters, budget reissues, or other
+# non-original releases.
+#
+# Search Spotify using artist + track title, score the results,
+# and return the highest-confidence candidate.
+#
+# Returns:
+#   Spotify track object
+#   or None if no trustworthy match is found.
+def find_best_spotify_metadata_match(acr_result):
+    artist = acr_result.get("artist", "")
+    title = acr_result.get("title", "")
+
+    if not artist or not title:
+        return None
+
+    token = get_spotify_access_token()
+
+    response = requests.get(
+        "https://api.spotify.com/v1/search",
+        headers={"Authorization": f"Bearer {token}"},
+        params={
+            "q": f'track:"{title}" artist:"{artist}"',
+            "type": "track",
+            "limit": 10,
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    tracks = response.json().get("tracks", {}).get("items", [])
+
+    if not tracks:
+        return None
+
+    scored = []
+
+    for track in tracks:
+        # Never allow Spotify metadata correction unless the Spotify artist
+        # actually matches the ACRCloud artist. This prevents same-title
+        # false corrections like Curtis Mayfield -> $heem.
+        if not spotify_artist_matches(
+            acr_result.get("artist", ""),
+            track.get("artists", []),
+        ):
+            print(
+                "Rejected Spotify metadata correction candidate: "
+                f"{track.get('artists', [{}])[0].get('name', '')} - "
+                f"{track.get('name', '')} "
+                f"for ACR artist={acr_result.get('artist')}"
+            )
+            continue
+
+        score = score_spotify_track(acr_result, track)
+
+        if score >= 85:
+
+            album = track.get("album", {})
+
+            release_date = album.get("release_date", "9999")
+
+            # Prefer full albums over singles and EPs when multiple
+            # Spotify releases appear to be the same recording.
+            album_priority = 0 if album.get("album_type") == "album" else 1
+
+            scored.append(
+                (
+                    score,
+                    release_date,
+                    album_priority,
+                    track,
+                )
+            )
+
+    if not scored:
+        return None
+
+    # Sort preference:
+    #
+    # 1. Highest confidence score
+    # 2. Earliest release date
+    # 3. Prefer full albums over singles/EPs
+    # 4. Prefer simpler album titles when everything
+    #    else is effectively equal
+    scored.sort(
+        key=lambda item: (
+            -item[0],
+            item[1],
+            item[2],
+            len(item[3].get("album", {}).get("name", "")),
+        )
+    )
+
+    return scored[0][3]
+
+
+# Replace ACRCloud metadata with cleaner Spotify metadata when
+# a high-confidence Spotify match can be found.
+#
+# Recognition itself still comes from ACRCloud.
+#
+# This function only improves:
+#   - album name
+#   - artwork source
+#   - Spotify identifiers
+#   - release date metadata
+#
+# If Spotify cannot confidently identify the same track,
+# the original ACRCloud result is returned unchanged.
+#
+# This ensures rare, obscure, or non-streaming recordings
+# continue to work normally.
+def correct_metadata_with_spotify(acr_result):
+    # Preserve recordings explicitly identified as live, unplugged, or concert
+    # material in either the album or title. Do not let Spotify normalize them
+    # to a studio album or another release.
+
+    if not acr_result:
+        return acr_result
+
+    acr_album = normalize_metadata_text(acr_result.get("album", ""))
+    acr_title = normalize_metadata_text(acr_result.get("title", ""))
+
+    protected_recording_keywords = (
+        "live",
+        "unplugged",
+        "concert",
+    )
+
+    protected_text = f"{acr_album} {acr_title}"
+
+    if any(
+        re.search(rf"\b{re.escape(keyword)}\b", protected_text)
+        for keyword in protected_recording_keywords
+    ):
+        print(
+            f"Skipping Spotify correction for protected recording: "
+            f"{acr_result.get('artist', '')} - "
+            f"{acr_result.get('title', '')} "
+            f"({acr_result.get('album', '')})"
+        )
+
+        # ACRCloud can still attach embedded Spotify IDs to protected live
+        # matches, and those IDs may point to a studio album. Remove them so
+        # artwork lookup falls back to an album-text search instead of trusting
+        # the wrong Spotify album ID.
+        protected_result = dict(acr_result)
+        protected_result.pop("spotify_album_id", None)
+        protected_result.pop("spotify_track_id", None)
+
+        return protected_result
+    try:
+        # Attempt to find a cleaner Spotify representation of the
+        # same recording.
+        spotify_track = find_best_spotify_metadata_match(acr_result)
+
+        # No trustworthy Spotify match found. Continue using the
+        # original ACRCloud metadata.
+        if not spotify_track:
+            return acr_result
+
+        album = spotify_track.get("album", {})
+        artists = spotify_track.get("artists", [])
+
+        # Start with the original ACRCloud result and selectively
+        # replace fields using Spotify metadata.
+        corrected = dict(acr_result)
+
+        corrected["title"] = clean_metadata_title_for_display(
+            spotify_track.get("name") or acr_result.get("title", "")
+        )
+        corrected["artist"] = (
+            artists[0].get("name", "") if artists else acr_result.get("artist", "")
+        )
+        corrected["album"] = clean_metadata_album_for_display(
+            album.get("name") or acr_result.get("album", "")
+        )
+        corrected["spotify_track_id"] = spotify_track.get("id") or acr_result.get(
+            "spotify_track_id"
+        )
+        corrected["spotify_album_id"] = album.get("id") or acr_result.get(
+            "spotify_album_id"
+        )
+        corrected["spotify_release_date"] = album.get("release_date")
+        corrected["metadata_corrected_by_spotify"] = True
+        corrected["acr_album"] = acr_result.get("album", "")
+
+        # Log metadata corrections so unusual matches can be reviewed
+        # later when tuning the matching logic.
+
+        if corrected.get("album") != acr_result.get("album"):
+            print(
+                "Spotify metadata correction: "
+                f"{acr_result.get('artist')} - "
+                f"{acr_result.get('title')} "
+                f"(ACR album={acr_result.get('album')}, "
+                f"ACR score={acr_result.get('score')}) -> "
+                f"{corrected.get('artist')} - "
+                f"{corrected.get('title')} "
+                f"(Spotify album={corrected.get('album')}, "
+                f"release={corrected.get('spotify_release_date')}, "
+                f"spotify_album_id={corrected.get('spotify_album_id')}, "
+                f"spotify_track_id={corrected.get('spotify_track_id')})"
+            )
+
+        return corrected
+
+    except Exception as e:
+        print(f"Spotify metadata correction failed: {e}")
+        return acr_result

@@ -1,0 +1,14 @@
+# Python/runtime artifacts
+venv/
+__pycache__/
+*.pyc
+
+# Local logs
+*.log
+
+# macOS metadata
+.DS_Store
+__MACOSX/
+
+# Config Files
+*_config.py

@@ -1,0 +1,21 @@
+#!/bin/sh
+
+LED=$(ls /sys/class/leds/input*::numlock/brightness 2>/dev/null | head -n 1)
+
+if [ -z "$LED" ]; then
+  echo "No numlock LED found" >&2
+  exit 1
+fi
+
+case "$1" in
+  on)
+    echo 1 > "$LED"
+    ;;
+  off)
+    echo 0 > "$LED"
+    ;;
+  *)
+    echo "Usage: sayo-led on|off" >&2
+    exit 2
+    ;;
+esac

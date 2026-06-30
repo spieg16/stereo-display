@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=Stereo Display
+Exec=/bin/bash -c '/home/spieg16/repos/stereo-display/venv/bin/python -u /home/spieg16/repos/stereo-display/stereo_display.py >> /home/spieg16/repos/stereo-display/stereo-display.log 2>&1'

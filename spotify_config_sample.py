@@ -1,0 +1,2 @@
+SPOTIFY_CLIENT_ID = "redacted"
+SPOTIFY_CLIENT_SECRET = "redacted"
