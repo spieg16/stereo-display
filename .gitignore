@@ -12,3 +12,11 @@ __MACOSX/
 
 # Config Files
 *_config.py
+
+# Editor/temp files
+*.swp
+*.swo
+*~
+
+# Local environment
+.env
