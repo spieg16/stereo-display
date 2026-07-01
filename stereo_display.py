@@ -25,7 +25,7 @@ from lastfm import update_now_playing, scrobble
 import re
 
 # Local IP address for the Bluesound/BluOS player.
-NODE_IP = "192.168.4.40"
+NODE_IP = "192.168.4.40"  # Change for your BluOS player
 BASE = f"http://{NODE_IP}:11000"
 
 # Keep important content away from CRT overscan edges.
