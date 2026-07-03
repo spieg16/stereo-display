@@ -243,25 +243,44 @@ def same_artist(a, b):
     return a.get("artist", "").strip().lower() == b.get("artist", "").strip().lower()
 
 
-# Fetch analog artwork with an in-memory cache so later tracks on the same album do not hit APIs again.
 def get_analog_artwork_image(result, analog_art_cache):
+    # Fetch analog artwork with an in-memory cache so repeated artwork lookups
+    # do not hit external APIs unnecessarily. Only reuse cached artwork when an
+    # image was actually cached; a previous failed lookup should not permanently
+    # block a later retry.
     cache_key = result.get("spotify_album_id") or (
         result.get("artist", ""),
         result.get("album", ""),
         result.get("title", ""),
     )
 
+    print(f"Artwork cache key: {cache_key}")
+
     if cache_key in analog_art_cache:
-        print(f"Using cached artwork for {cache_key}")
+        print(f"Artwork cache: hit for {cache_key}")
         return analog_art_cache[cache_key]
 
+    print(f"Artwork cache: miss for {cache_key}")
+
     artwork_url = fetch_artwork_for_analog_result(result)
-    artwork_img = download_artwork_image(artwork_url)
+
+    if not artwork_url:
+        print("Artwork download: skipped, no artwork URL")
+        return None
+
+    try:
+        artwork_img = download_artwork_image(artwork_url)
+    except Exception as e:
+        print(f"Artwork download: FAILED: {e}")
+        return None
 
     if artwork_img:
+        print("Artwork download: OK")
         analog_art_cache[cache_key] = artwork_img
+        return artwork_img
 
-    return artwork_img
+    print("Artwork download: no image returned")
+    return None
 
 
 # Determine whether the most recent WAV sample is silence/runout based on RMS.

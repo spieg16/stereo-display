@@ -59,10 +59,14 @@ def get_spotify_access_token():
 
 
 def fetch_artwork_from_spotify_album_id(album_id):
-    # ACRCloud sometimes does not return Spotify metadata. In that case, let the
-    # caller fall back to another artwork source.
+    # Look up album artwork directly from Spotify when ACRCloud or the Spotify
+    # correction layer provides an album ID. This is usually more precise than
+    # text searching by artist/title.
     if not album_id:
+        print("Artwork lookup: Spotify skipped, no album ID")
         return None
+
+    print(f"Artwork lookup: Spotify album ID {album_id}")
 
     token = get_spotify_access_token()
 
@@ -76,16 +80,93 @@ def fetch_artwork_from_spotify_album_id(album_id):
     images = response.json().get("images", [])
 
     if not images:
+        print(f"Artwork lookup: Spotify album ID {album_id} returned no images")
         return None
+
+    print(f"Artwork lookup: Spotify artwork found for album ID {album_id}")
 
     # Spotify returns images largest-first in normal API responses.
     return images[0]["url"]
 
 
+def fetch_artwork_from_spotify_album_search(artist, album):
+    # Search Spotify by artist and album name when no Spotify album ID is
+    # available. This covers ACRCloud matches where the artist/title/album are
+    # useful, but ACRCloud did not return embedded Spotify metadata.
+    artist = (artist or "").strip()
+    album = (album or "").strip()
+
+    if not artist or not album:
+        print("Artwork lookup: Spotify album search skipped, missing artist/album")
+        return None
+
+    print(f"Artwork lookup: Spotify album search query={artist} {album!r}")
+
+    token = get_spotify_access_token()
+
+    response = requests.get(
+        "https://api.spotify.com/v1/search",
+        headers={"Authorization": f"Bearer {token}"},
+        params={
+            "q": f"{artist} {album}",
+            "type": "album",
+            "limit": 5,
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    albums = response.json().get("albums", {}).get("items", [])
+
+    if not albums:
+        print(
+            f"Artwork lookup: Spotify album search found no results for {artist} - {album}"
+        )
+        return None
+
+    target_album = normalize_metadata_text(album)
+    target_artist = normalize_artist_for_match(artist)
+
+    for spotify_album in albums:
+        spotify_album_name = spotify_album.get("name", "")
+        spotify_artists = spotify_album.get("artists", [])
+        spotify_artist = (
+            normalize_artist_for_match(spotify_artists[0].get("name", ""))
+            if spotify_artists
+            else ""
+        )
+
+        if (
+            normalize_metadata_text(spotify_album_name) == target_album
+            and spotify_artist == target_artist
+        ):
+            images = spotify_album.get("images", [])
+
+            if not images:
+                print(
+                    "Artwork lookup: Spotify album search exact match had no images "
+                    f"for {spotify_artist} - {spotify_album_name}"
+                )
+                return None
+
+            print(
+                "Artwork lookup: Spotify album search found exact match "
+                f"{spotify_artists[0].get('name', '')} - {spotify_album_name}"
+            )
+            return images[0]["url"]
+
+    print(
+        f"Artwork lookup: Spotify album search found no exact album match for {artist} - {album}"
+    )
+    return None
+
+
 def fetch_artwork_from_itunes(artist, album_or_title):
-    # iTunes search is a fallback for cases where ACRCloud does not provide a
-    # Spotify album ID.
+    # iTunes search is the fallback artwork source when Spotify album artwork is
+    # unavailable or unusable.
     query = f"{artist} {album_or_title}"
+
+    print(f"Artwork lookup: iTunes query={query!r}")
 
     response = requests.get(
         "https://itunes.apple.com/search",
@@ -101,36 +182,70 @@ def fetch_artwork_from_itunes(artist, album_or_title):
     results = response.json().get("results", [])
 
     if not results:
+        print(f"Artwork lookup: iTunes found no results for {query!r}")
         return None
 
     artwork_url = results[0].get("artworkUrl100")
+    collection_name = results[0].get("collectionName", "Unknown Album")
+    artist_name = results[0].get("artistName", "Unknown Artist")
 
     if not artwork_url:
+        print(
+            "Artwork lookup: iTunes result had no artwork URL "
+            f"for {artist_name} - {collection_name}"
+        )
         return None
+
+    print(f"Artwork lookup: iTunes found {artist_name} - {collection_name}")
 
     # Request larger artwork than the default 100x100 thumbnail.
     return artwork_url.replace("100x100bb", "600x600bb")
 
 
 def fetch_artwork_for_analog_result(result):
+    # Resolve an artwork URL for the finalized analog metadata. Metadata
+    # correction should already be complete before this function is called.
+    artist = result.get("artist", "")
+    title = result.get("title", "")
+    album = result.get("album", "")
     spotify_album_id = result.get("spotify_album_id")
+
+    print(f"Artwork lookup: {artist} - {title} ({album or 'Unknown Album'})")
 
     # Prefer Spotify because ACRCloud often provides a precise album ID, which
     # avoids bad text-search matches from compilation albums or alternate
     # releases.
+
     url = fetch_artwork_from_spotify_album_id(spotify_album_id)
 
     if url:
+        print("Artwork lookup: final source=Spotify album ID")
+        return url
+
+    url = fetch_artwork_from_spotify_album_search(
+        artist,
+        album,
+    )
+
+    if url:
+        print("Artwork lookup: final source=Spotify album search")
         return url
 
     # Fall back to an iTunes text search if Spotify metadata is unavailable.
     # Prefer album over title for artwork lookup. Track-title searches can
     # easily land on the wrong release, especially for live albums where the
     # same song also appears on studio albums, compilations, or remasters.
-    return fetch_artwork_from_itunes(
-        result.get("artist", ""),
-        result.get("album", "") or result.get("title", ""),
+    url = fetch_artwork_from_itunes(
+        artist,
+        album or title,
     )
+
+    if url:
+        print("Artwork lookup: final source=iTunes")
+        return url
+
+    print("Artwork lookup: final source=None")
+    return None
 
 
 def normalize_metadata_title_for_match(value):
