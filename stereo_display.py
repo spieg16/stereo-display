@@ -78,12 +78,9 @@ MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE = 0.50
 # duration.
 MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_SCROBBLE_SECONDS = 20
 
-# Font used for analog now-playing metadata.
-#
-# Use a real font file instead of pygame.font.SysFont(None, ...), which falls
-# back to pygame's bundled FreeSans Bold. A direct font path makes CRT
-# readability tests repeatable and lets us swap fonts by changing one constant.
-ANALOG_FONT_PATH = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+# Off-white analog metadata text reduces CRT bloom/haloing compared with pure
+# white, without changing font size or layout.
+ANALOG_TEXT_COLOR = (220, 220, 220)
 
 
 # Pull only the BluOS status fields this app needs from the XML response.
@@ -698,15 +695,9 @@ def main():
                     # HDMI LCD future note:
                     #   Text will be sharper on LCD, so these can likely be smaller.
                     #   That would allow more metadata, fewer title wraps, or a larger cover.
-
-                    # Use the analog metadata font for the main now-playing text.
-                    #
-                    # Keep the sizes the same as the old pygame default-font setup for the
-                    # first test, so any readability change comes from the font itself rather
-                    # than from a layout change.
-                    title_font = pygame.font.Font(ANALOG_FONT_PATH, 96)
-                    artist_font = pygame.font.Font(ANALOG_FONT_PATH, 86)
-                    album_font = pygame.font.Font(ANALOG_FONT_PATH, 64)
+                    title_font = pygame.font.SysFont(None, 96, bold=True)
+                    artist_font = pygame.font.SysFont(None, 86, bold=True)
+                    album_font = pygame.font.SysFont(None, 64, bold=True)
 
                     x = safe_x + 16
                     y = safe_y + 16
@@ -754,7 +745,7 @@ def main():
                         title_lines[-1] = last + "…"
 
                     for line in title_lines:
-                        text = title_font.render(line, True, (255, 255, 255))
+                        text = title_font.render(line, True, ANALOG_TEXT_COLOR)
                         screen.blit(text, (x, y))
                         y += text.get_height() + 6
 
@@ -770,7 +761,7 @@ def main():
                         if line != text_value:
                             line = line[:-1] + "…"
 
-                        text = font_obj.render(line, True, (255, 255, 255))
+                        text = font_obj.render(line, True, ANALOG_TEXT_COLOR)
                         screen.blit(text, (x, y))
                         y += text.get_height() + 8
 
