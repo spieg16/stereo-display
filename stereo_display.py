@@ -78,6 +78,13 @@ MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE = 0.50
 # duration.
 MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_SCROBBLE_SECONDS = 20
 
+# Font used for analog now-playing metadata.
+#
+# Use a real font file instead of pygame.font.SysFont(None, ...), which falls
+# back to pygame's bundled FreeSans Bold. A direct font path makes CRT
+# readability tests repeatable and lets us swap fonts by changing one constant.
+ANALOG_FONT_PATH = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+
 
 # Pull only the BluOS status fields this app needs from the XML response.
 def parse_status_xml(xml_text: str) -> dict:
@@ -691,9 +698,15 @@ def main():
                     # HDMI LCD future note:
                     #   Text will be sharper on LCD, so these can likely be smaller.
                     #   That would allow more metadata, fewer title wraps, or a larger cover.
-                    title_font = pygame.font.SysFont(None, 96, bold=True)
-                    artist_font = pygame.font.SysFont(None, 86, bold=True)
-                    album_font = pygame.font.SysFont(None, 64, bold=True)
+
+                    # Use the analog metadata font for the main now-playing text.
+                    #
+                    # Keep the sizes the same as the old pygame default-font setup for the
+                    # first test, so any readability change comes from the font itself rather
+                    # than from a layout change.
+                    title_font = pygame.font.Font(ANALOG_FONT_PATH, 96)
+                    artist_font = pygame.font.Font(ANALOG_FONT_PATH, 86)
+                    album_font = pygame.font.Font(ANALOG_FONT_PATH, 64)
 
                     x = safe_x + 16
                     y = safe_y + 16
