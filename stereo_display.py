@@ -78,9 +78,14 @@ MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE = 0.50
 # duration.
 MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_SCROBBLE_SECONDS = 20
 
-# Off-white analog metadata text reduces CRT bloom/haloing compared with pure
-# white, without changing font size or layout.
-ANALOG_TEXT_COLOR = (220, 220, 220)
+# Off-white text reduces CRT bloom/haloing compared with pure white.
+# Use this anywhere the display would otherwise render normal white text.
+TEXT_COLOR = (220, 220, 220)
+
+# Dimmer text for full-screen blocking status messages.
+# These pages are mostly black with one large centered word, so they can make
+# the CRT look brighter than the normal artwork/metadata page.
+STATUS_TEXT_COLOR = (180, 180, 180)
 
 
 # Pull only the BluOS status fields this app needs from the XML response.
@@ -166,7 +171,7 @@ def draw_center_message(screen, message):
     screen.fill((0, 0, 0))
 
     font = pygame.font.SysFont(None, 72, bold=True)
-    text = font.render(message, True, (255, 255, 255))
+    text = font.render(message, True, STATUS_TEXT_COLOR)
     rect = text.get_rect(center=screen.get_rect().center)
 
     screen.blit(text, rect)
@@ -184,7 +189,7 @@ def draw_corner_status(screen, message, safe_x, safe_y, safe_w, safe_h):
     text = font.render(
         message,
         True,
-        (255, 255, 255),
+        TEXT_COLOR,
     )
 
     rect = text.get_rect()
@@ -745,7 +750,7 @@ def main():
                         title_lines[-1] = last + "…"
 
                     for line in title_lines:
-                        text = title_font.render(line, True, ANALOG_TEXT_COLOR)
+                        text = title_font.render(line, True, TEXT_COLOR)
                         screen.blit(text, (x, y))
                         y += text.get_height() + 6
 
@@ -761,7 +766,7 @@ def main():
                         if line != text_value:
                             line = line[:-1] + "…"
 
-                        text = font_obj.render(line, True, ANALOG_TEXT_COLOR)
+                        text = font_obj.render(line, True, TEXT_COLOR)
                         screen.blit(text, (x, y))
                         y += text.get_height() + 8
 
@@ -814,7 +819,7 @@ def main():
                     text = font.render(
                         "Listening...",
                         True,
-                        (255, 255, 255),
+                        TEXT_COLOR,
                     )
 
                     rect = text.get_rect(center=(sw // 2, sh // 2))
