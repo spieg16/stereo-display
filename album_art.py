@@ -351,6 +351,19 @@ def looks_like_compilation_album(album_name):
     return any(re.search(pattern, album_name) for pattern in compilation_patterns)
 
 
+def looks_like_single_release(album_name):
+    # Detect single-style releases that should usually lose to a full album
+    # when choosing canonical album metadata.
+    album = normalize_metadata_text(album_name)
+
+    single_patterns = [
+        r"\bdigital\s+45\b",
+        r"\bsingle\b",
+    ]
+
+    return any(re.search(pattern, album) for pattern in single_patterns)
+
+
 # Remove generic release/version wording from titles before they are displayed.
 #
 # This catches remaster labels, Album Version, and LP Version suffixes. Do not
@@ -510,7 +523,7 @@ def spotify_artist_matches(acr_artist, spotify_artists):
 # metadata, so Spotify should still be able to improve those cases when it has
 # a better album candidate.
 #
-# Current normal maximum score is 120 before any compilation penalty. Only
+# Current normal maximum score is 120 before release-type penalties. Only
 # high-confidence matches should replace ACRCloud metadata.
 def score_spotify_track(acr_result, spotify_track):
     score = 0
@@ -530,25 +543,38 @@ def score_spotify_track(acr_result, spotify_track):
     if spotify_track.get("album", {}).get("album_type") == "album":
         score += 15
 
-    # Prefer candidates whose album title shares meaningful words with the ACR
-    # album, but require at least two shared words so a single generic word does
-    # not swing the result.
-    acr_album_words = metadata_words(acr_result.get("album", ""))
-    spotify_album_words = metadata_words(spotify_track.get("album", {}).get("name", ""))
+    # Compare meaningful album-title words between ACRCloud and Spotify.
+    # Shared words can help, but only when the ACR album itself looks reliable.
+    acr_album = acr_result.get("album", "")
+    spotify_album_name = spotify_track.get("album", {}).get("name", "")
 
-    if acr_album_words and spotify_album_words:
+    acr_album_words = metadata_words(acr_album)
+    spotify_album_words = metadata_words(spotify_album_name)
+
+    # Only use ACRCloud album words as positive evidence when the ACR album
+    # itself looks like a real album. If ACR returns a compilation, single, or
+    # digital 45, its album words can accidentally reward the wrong Spotify
+    # candidate, such as a two-song single release instead of the canonical LP.
+    if (
+        acr_album_words
+        and spotify_album_words
+        and not looks_like_compilation_album(acr_album)
+        and not looks_like_single_release(acr_album)
+    ):
         overlap = acr_album_words & spotify_album_words
 
         if len(overlap) >= 2:
             score += 20
 
-    spotify_album_name = spotify_track.get("album", {}).get("name", "")
-
-    # Penalize obvious compilations. They can still win when no better
-    # original-album candidate exists, but they should not beat a plausible
-    # full album just because Spotify/ACR metadata points at a "best of"
-    # release.
+    # Penalize obvious compilations so "Best Of", "Greatest Hits", and similar
+    # releases do not beat the original album when title and artist also match.
     if looks_like_compilation_album(spotify_album_name):
+        score -= 30
+
+    # Penalize single-style releases separately from compilations. These are
+    # valid Spotify releases, but they are usually not the album we want to show
+    # for analog playback when a full canonical album candidate exists.
+    if looks_like_single_release(spotify_album_name):
         score -= 30
 
     return score
