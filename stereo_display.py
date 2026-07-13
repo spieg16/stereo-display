@@ -215,8 +215,9 @@ def draw_corner_status(screen, message, safe_x, safe_y, safe_w, safe_h):
 # 12 seconds is long enough for reliable identification while
 # avoiding the latency and device contention seen with 20-second
 # recheck captures.
-def record_sample(seconds=12):
-    print("Recording sample...")
+def record_sample(seconds=12, log=True):
+    if log:
+        print("Recording sample...")
 
     subprocess.run(
         [
@@ -234,7 +235,8 @@ def record_sample(seconds=12):
         stderr=subprocess.DEVNULL,
     )
 
-    print("Recording complete")
+    if log:
+        print("Recording complete")
 
 
 # Compare tracks using the normalized key so album/reissue metadata differences do not count as changes.
@@ -861,13 +863,18 @@ def main():
                         "Waiting for Audio",
                     )
 
-                    record_sample(2)
+                    # Continue taking short RMS samples during the recognition cooldown, but
+                    # suppress routine recording messages so the cooldown log stays readable.
+                    in_recognition_cooldown = (
+                        time.time() < next_initial_recognition_time
+                    )
+                    record_sample(2, log=not in_recognition_cooldown)
 
                     last_analog_check = time.time()
 
                     # Cooldown after a failed initial recognition. We still sample for RMS,
                     # but skip expensive ACRCloud requests until the cooldown expires.
-                    if time.time() < next_initial_recognition_time:
+                    if in_recognition_cooldown:
                         remaining = int(next_initial_recognition_time - time.time())
                         print(f"Waiting {remaining}s before next recognition attempt")
                         time.sleep(0.1)
