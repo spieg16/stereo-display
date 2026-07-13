@@ -355,6 +355,15 @@ def normalize_track_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Remove anniversary-edition suffixes that ACRCloud may append to track
+    # titles, while leaving unrelated parenthetical title text intact.
+    title = re.sub(
+        r"\s*\(\s*\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     return title
 
 
@@ -428,7 +437,30 @@ def clean_lastfm_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Remove anniversary-edition suffixes that ACRCloud may append to track
+    # titles, while leaving unrelated parenthetical title text intact.
+    title = re.sub(
+        r"\s*\(\s*\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     return title
+
+
+# Remove release-edition suffixes from album names before display and scrobbling.
+def clean_album_for_display(album):
+    album = (album or "").strip()
+
+    album = re.sub(
+        r"\s*\(\s*\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?\s*\)$",
+        "",
+        album,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return album
 
 
 # The stable identity of a track for comparison and scrobble dedupe.
@@ -927,6 +959,10 @@ def main():
                             analog_result.get("title", "")
                         )
 
+                        analog_result["album"] = clean_album_for_display(
+                            analog_result.get("album", "")
+                        )
+
                         analog_result["artist"] = clean_artist_for_display(
                             analog_result.get("artist", "")
                         )
@@ -1022,6 +1058,10 @@ def main():
                             new_result = correct_metadata_with_spotify(new_result)
                             new_result["title"] = clean_lastfm_title(
                                 new_result.get("title", "")
+                            )
+
+                            new_result["album"] = clean_album_for_display(
+                                new_result.get("album", "")
                             )
 
                             new_result["artist"] = clean_artist_for_display(
