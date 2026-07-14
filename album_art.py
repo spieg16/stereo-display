@@ -596,7 +596,10 @@ def score_spotify_track(acr_result, spotify_track):
 #   or None if no trustworthy match is found.
 def find_best_spotify_metadata_match(acr_result):
     artist = acr_result.get("artist", "")
-    title = acr_result.get("title", "")
+
+    # Remove generic remaster/version wording before searching Spotify so
+    # canonical album versions are not excluded by overly specific ACR titles.
+    title = clean_metadata_title_for_display(acr_result.get("title", ""))
 
     if not artist or not title:
         return None
