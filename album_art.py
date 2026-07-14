@@ -346,6 +346,7 @@ def looks_like_compilation_album(album_name):
         r"\bcollection\b",
         r"\bcompilation\b",
         r"\bsingles\b",
+        r"\bplaylist\b",
     ]
 
     return any(re.search(pattern, album_name) for pattern in compilation_patterns)
