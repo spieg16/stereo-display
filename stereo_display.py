@@ -1041,6 +1041,10 @@ def main():
                                 print("No audio detected. Switching back to ART mode.")
                                 continue
 
+                            # Stay in ANALOG mode until the silence threshold is reached, but do not
+                            # send samples already classified as silent to ACRCloud.
+                            continue
+
                         else:
                             analog_silence_count = 0
 
