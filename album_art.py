@@ -406,8 +406,9 @@ def clean_metadata_title_for_display(title):
 # Remove generic reissue/edition wording from album display names.
 #
 # This keeps album names like "Daydream Nation (Deluxe Edition)",
-# "Ultramega OK (Expanded Reissue)", "Déjà vu (2021 Remaster)", and
-# "Histoire De Melody Nelson - 40ème Anniversaire" from showing reissue
+# "Ultramega OK (Expanded Reissue)", "Déjà Vu (2021 Remaster)",
+# "My Generation (50th Anniversary / Super Deluxe)", and
+# "Histoire De Melody Nelson – 40ème Anniversaire" from showing reissue
 # metadata on the CRT, while preserving meaningful album names such as
 # "Superfly (Original Soundtrack)".
 def clean_metadata_album_for_display(album):
@@ -423,7 +424,9 @@ def clean_metadata_album_for_display(album):
         r"(?:\s*(?:&|and)\s*(?:remaster(?:ed)?|expanded|deluxe|special|legacy))*"
         r"(?:\s+(?:edition|reissue|version|original\s+album\s+mix|album\s+mix|mix))?"
         r"|"
-        r"(?:\d+(?:st|nd|rd|th)\s+anniversary\s+)?"
+        r"(?:\d+(?:st|nd|rd|th)\s+anniversary\s*)?"
+        r"(?:/\s*)?"
+        r"(?:super\s+)?"
         r"(?:deluxe|expanded|bonus\s+track|special|legacy)"
         r"(?:\s+(?:edition|reissue))?"
         r")"
@@ -434,7 +437,7 @@ def clean_metadata_album_for_display(album):
     ).strip()
 
     album = re.sub(
-        r"\s*-\s*\d+(?:st|nd|rd|th|e|ème)?\s+anniversaire$",
+        r"\s*[-–]\s*\d+(?:st|nd|rd|th|e|ème)?\s+anniversaire$",
         "",
         album,
         flags=re.IGNORECASE,
