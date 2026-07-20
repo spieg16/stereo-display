@@ -400,6 +400,13 @@ def clean_metadata_title_for_display(title):
         flags=re.IGNORECASE,
     ).strip()
 
+    title = re.sub(
+        r"\s*\(\s*(?:mono|stereo)\s+version\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     return title
 
 
