@@ -401,7 +401,7 @@ def clean_metadata_title_for_display(title):
     ).strip()
 
     title = re.sub(
-        r"\s*\(\s*(?:mono|stereo)\s+version\s*\)$",
+        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
         "",
         title,
         flags=re.IGNORECASE,

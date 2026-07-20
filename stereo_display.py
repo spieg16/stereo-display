@@ -364,10 +364,10 @@ def normalize_track_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
-    # Treat mono/stereo version suffixes as recording metadata rather than
-    # separate tracks when comparing ACRCloud results.
+    # Treat mono/stereo suffixes as recording metadata rather than separate
+    # tracks when comparing ACRCloud results.
     title = re.sub(
-        r"\s*\(\s*(?:mono|stereo)\s+version\s*\)$",
+        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
         "",
         title,
         flags=re.IGNORECASE,
@@ -455,8 +455,10 @@ def clean_lastfm_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Treat mono/stereo suffixes as recording metadata rather than separate
+    # tracks when comparing ACRCloud results.
     title = re.sub(
-        r"\s*\(\s*(?:mono|stereo)\s+version\s*\)$",
+        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
         "",
         title,
         flags=re.IGNORECASE,
