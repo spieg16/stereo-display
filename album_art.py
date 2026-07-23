@@ -386,6 +386,20 @@ def clean_metadata_title_for_display(title):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Remove bracketed remaster metadata while preserving meaningful
+    # parenthetical version information such as "(1969 Mix)".
+    title = re.sub(
+        r"\s*\[\s*(?:\d{4}\s+)?"
+        r"(?:digital\s+)?"
+        r"remaster(?:ed)?"
+        r"(?:\s+version)?"
+        r"(?:\s+\d{4})?"
+        r"\s*\]$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     title = re.sub(
         r"\s*-\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?$",
         "",

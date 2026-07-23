@@ -339,6 +339,20 @@ def normalize_track_title(title):
         if title.endswith(suffix):
             title = title[: -len(suffix)].strip()
 
+    # Treat bracketed remaster wording as release metadata for track
+    # comparison and scrobble deduplication.
+    title = re.sub(
+        r"\s*\[\s*(?:\d{4}\s+)?"
+        r"(?:digital\s+)?"
+        r"remaster(?:ed)?"
+        r"(?:\s+version)?"
+        r"(?:\s+\d{4})?"
+        r"\s*\]$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # For internal track identity only, treat a trailing live-location
     # parenthetical as metadata rather than a different song. This prevents
     # ACRCloud from creating a false track change when it alternates between:
@@ -430,6 +444,19 @@ def clean_lastfm_title(title):
         r"(?:\s+version)?"
         r"(?:\s+\d{4})?"
         r"\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # Remove bracketed remaster metadata before display and Last.fm submission.
+    title = re.sub(
+        r"\s*\[\s*(?:\d{4}\s+)?"
+        r"(?:digital\s+)?"
+        r"remaster(?:ed)?"
+        r"(?:\s+version)?"
+        r"(?:\s+\d{4})?"
+        r"\s*\]$",
         "",
         title,
         flags=re.IGNORECASE,
