@@ -1,6 +1,6 @@
 # Stereo Display Documentation
 
-Last updated: 2026-06-30
+Last updated: 2026-07-30
 
 ## Overview
 
@@ -94,9 +94,10 @@ Current workflow:
 9. The active title is cleaned before display, internal comparison, and Last.fm submission.
 10. The app retrieves artwork, sends Last.fm Now Playing, and displays the track.
 11. During playback, the app records 12-second recheck samples every 30 seconds.
-12. Track changes scrobble the previous track when it is eligible.
-13. Repeated silence scrobbles the final eligible track and returns to ART Mode.
-14. The Sayo LED turns off.
+12. If a later ACRCloud match identifies the same recording with more specific live title or release metadata, the app upgrades the active metadata in place without treating it as a track change.
+13. Track changes scrobble the previous track when it is eligible.
+14. Repeated silence scrobbles the final eligible track and returns to ART Mode.
+15. The Sayo LED turns off.
 
 ## Source Files
 
@@ -450,7 +451,7 @@ Give Me Your Love
 Give Me Your Love (Love Song)
 ```
 
-For Spotify candidate matching only, the code normalizes titles enough to treat safe descriptive aliases as equivalent. It does not collapse meaningful variants such as `Live`, `Reprise`, `Part`, `Alternate Take`, `Demo`, `Mix`, `Edit`, `Instrumental`, `Mono`, or `Stereo`.
+For Spotify candidate matching only, the code normalizes titles enough to treat safe descriptive aliases as equivalent. Before Spotify searching, generic release metadata such as remaster wording is removed from the search title while preserving meaningful recording variants such as mixes, alternate takes, live recordings, mono, and stereo versions. It does not collapse meaningful variants such as `Live`, `Reprise`, `Part`, `Alternate Take`, `Demo`, `Mix`, `Edit`, `Instrumental`, `Mono`, or `Stereo`.
 
 ### Metadata Cleanup for Display and Last.fm
 
@@ -473,7 +474,10 @@ Remastered
 Remastered Version
 2013 Remaster
 2001 Digital Remaster
+[2019 Remaster]
 ```
+
+Generic bracketed remaster tags (for example `[2019 Remaster]`) are also removed while preserving meaningful version information such as `(1969 Mix)`.
 
 It does not remove meaningful text such as:
 
@@ -524,6 +528,8 @@ Analog artwork lookup uses a layered approach:
 2. If Spotify artwork is unavailable, fall back to iTunes artwork search.
 3. Prefer album title over track title for iTunes fallback search.
 
+Spotify album IDs returned by metadata correction are preferred because they avoid ambiguous album searches and produce more reliable artwork retrieval.
+
 The album-first fallback matters for live and compilation-prone material. Track-title searches can land on the wrong release when the same song appears on a studio album, live album, compilation, or remaster.
 
 Artwork is cached in memory during the current app run. Cache keys use Spotify album ID when available, otherwise artist / album / title.
@@ -572,6 +578,11 @@ Track comparison normalizes some ACR/metadata variants so these are not treated 
 - `Remaster`
 - `Remastered`
 - `Remastered Version`
+- `Mono`
+- `Stereo`
+- `Mono Version`
+- `Stereo Version`
+- Bracketed remaster tags such as `[2019 Remaster]`
 
 For internal track identity only, a trailing live-location parenthetical is treated as metadata rather than a different song. This prevents ACRCloud from creating a false track change when it alternates between:
 
@@ -581,6 +592,9 @@ Badlands
 ```
 
 The live detail is still preserved for display and Last.fm when ACRCloud provides it.
+
+If a later recognition identifies the same recording with more descriptive live metadata—for example changing `Sivad (Live)` to `Sivad (Live at the Cellar Door, Washington, DC - December 1970)`—the app upgrades the active metadata without treating it as a track change. Playback timing, confirmation state, and scrobble eligibility are preserved, while artwork and Last.fm Now Playing are refreshed using the improved metadata.
+
 
 A separate protection exists for different-artist changes.
 
@@ -686,6 +700,7 @@ ACR Match: Sonic Youth - Teen Age Riot (Album Version) (album=Daydream Nation (D
 Now Playing: Sonic Youth - Teen Age Riot (Daydream Nation)
 Last.fm Now Playing: Sonic Youth - Teen Age Riot
 Confirmed analog track: Sonic Youth - Teen Age Riot
+Upgraded metadata for same analog track: Miles Davis - Sivad (Live at the Cellar Door, Washington, DC - December 1970) (Live-Evil)
 Track Change: Eagles - Those Shoes (score=100)
 Last.fm Scrobble: Eagles - Heartache Tonight
 Last.fm Now Playing: Eagles - Those Shoes
@@ -711,6 +726,12 @@ Spotify metadata correction is deliberately best-effort. If Spotify cannot confi
 ### Album metadata can still vary
 
 Even after Spotify correction, album naming can vary across releases. The current logic strongly improves the most common problems but does not guarantee Discogs-level release accuracy.
+
+### ACRCloud release metadata can vary
+
+ACRCloud may identify the correct recording while alternating between different releases containing that recording (original albums, deluxe editions, session collections, budget compilations, retail bundles, and similar releases). Spotify correction reduces many of these cases but cannot eliminate all metadata variation because different fingerprints can legitimately resolve to different database entries.
+
+For a narrow class of same-track live recordings, the application can also upgrade the active metadata when a later ACRCloud recognition provides a more descriptive live title and release while still representing the same recording. This refreshes artwork and Last.fm Now Playing without resetting playback state or creating a track change.
 
 ### Compilation and release selection remain heuristic
 
@@ -766,7 +787,8 @@ Possible future improvements:
 
 - Cache Spotify metadata corrections by normalized artist/title to reduce repeated Spotify searches.
 - Add a manual override database for records ACRCloud cannot identify correctly.
-- Improve album-selection heuristics further if Spotify returns multiple plausible releases.
+- Further improve release-selection heuristics for recordings that appear on multiple legitimate releases (original albums, deluxe editions, session collections, soundtracks, compilations, and retail bundles).
+- Investigate preserving confirmed metadata when later ACRCloud recognitions appear to describe the same continuous recording using alternate release metadata.
 - Add an HDMI-specific UI if moving away from the CRT.
 - Investigate Pi 5 migration for more headroom.
 - Revisit waveform/spectrum visualization only if the Sony VT-M5 repair path fails.
