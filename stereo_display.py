@@ -1101,6 +1101,10 @@ def main():
                         if artwork_img:
                             analog_art_image = artwork_img
 
+                        # Start the recheck interval after initial recognition,
+                        # metadata correction, and artwork processing finish.
+                        last_analog_check = time.time()
+
                     else:
                         # Audio was present, but ACRCloud could not identify it. Back off before retrying.
                         print("No analog recognition result")
