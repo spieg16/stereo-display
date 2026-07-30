@@ -9,7 +9,7 @@ Stereo Display is a Raspberry Pi project that provides a full-screen now-playing
 The current application has two operating modes:
 
 - **ART Mode** - displays BluOS album artwork from the BluOS local API.
-- **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, improves metadata with Spotify when safe, retrieves artwork, updates Last.fm Now Playing, scrobbles tracks, and returns to ART Mode after silence.
+- **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, performs conservative Spotify metadata correction (including protected-recording inference when appropriate), retrieves artwork, updates Last.fm Now Playing, scrobbles tracks, and returns to ART Mode after silence.
 
 The app is primarily run from `stereo_display.py`.
 
@@ -90,7 +90,7 @@ Current workflow:
 5. Once audio is detected, the app waits briefly before fingerprinting.
 6. A 20-second initial sample is sent to ACRCloud.
 7. If recognition fails, a 30-second fallback sample is attempted.
-8. If recognized, the result is passed through conservative Spotify metadata correction.
+8. If recognized, the result is passed through conservative Spotify metadata correction. Protected recordings (live, unplugged, concert, etc.) are matched conservatively, and Spotify compilation matches may be used to infer missing protected-recording metadata.
 9. The active title is cleaned before display, internal comparison, and Last.fm submission.
 10. The app retrieves artwork, sends Last.fm Now Playing, and displays the track.
 11. During playback, the app records 12-second recheck samples every 30 seconds.
@@ -186,7 +186,7 @@ Responsibilities:
 - Caches the Spotify token in memory.
 - Uses Spotify album IDs when available.
 - Corrects ACRCloud metadata with a conservative Spotify lookup.
-- Protects live, unplugged, and concert recordings from studio normalization.
+- Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe metadata improvements between equivalent protected recordings.
 - Falls back to iTunes artwork search when Spotify artwork is unavailable.
 - Downloads artwork as RGB PIL images.
 
@@ -430,17 +430,23 @@ If Spotify cannot find a trustworthy match, the original ACRCloud result is retu
 
 ### Protected Recordings
 
-If the ACRCloud album or title says the recording is live, unplugged, or concert material, Spotify correction is skipped.
+Live, unplugged, concert, acoustic, and similar recordings receive additional protection during Spotify metadata correction.
 
-This prevents a live recording such as:
+Rather than performing a general Spotify search, the application performs a conservative search that only accepts Spotify results representing the same protected recording type and underlying performance.
+
+For example:
 
 ```text
 Badlands (Live at Madison Square Garden, New York, NY - June/July 2000)
 ```
 
-from being normalized to a studio release.
+will not be normalized to the studio recording simply because the title matches.
 
-When this protection triggers, embedded ACRCloud Spotify IDs are removed before artwork lookup. Those embedded IDs can point to the studio album even when the title or album clearly identifies a live recording.
+If ACRCloud omits the protected keyword from the title but Spotify returns a matching result on the same ACRCloud album that includes it, the application infers the protected recording type and allows equivalent protected recordings to compete normally.
+
+This improves cases where ACRCloud identifies the correct live performance but associates it with a compilation or anthology while preserving protection against accidental studio substitutions.
+
+When protected-recording handling is active, embedded ACRCloud Spotify IDs are ignored before artwork lookup so artwork is obtained from the selected Spotify correction rather than potentially incorrect embedded IDs.
 
 ### Title Matching for Spotify Lookup
 
@@ -508,17 +514,6 @@ It preserves meaningful album parentheticals such as:
 Original Soundtrack
 White Album
 ```
-
-### Spotify Album Selection
-
-When multiple Spotify candidates are good matches, the code prefers:
-
-1. Highest score.
-2. Earliest release date.
-3. Full albums over singles and EPs.
-4. Shorter album title when everything else is effectively equal.
-
-This is intended to favor original albums over compilations, singles, EPs, deluxe editions, and later reissues when possible, but it remains heuristic rather than Discogs-level release matching.
 
 ## Artwork Behavior
 
@@ -721,7 +716,7 @@ False matches are possible, especially on records that have been heavily sampled
 
 ### Spotify correction is conservative, not authoritative
 
-Spotify metadata correction is deliberately best-effort. If Spotify cannot confidently identify the same artist/title, the original ACRCloud result is retained. This matters for rare, private, bootleg, regional, or non-streaming records.
+Spotify metadata correction is deliberately best-effort. If Spotify cannot confidently identify the same artist/title, the original ACRCloud result is retained. For protected recordings, correction is limited to equivalent recording types, but multiple legitimate releases of the same performance may still exist, so album selection remains heuristic. This matters for rare, private, bootleg, regional, or non-streaming records.
 
 ### Album metadata can still vary
 
