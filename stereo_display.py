@@ -248,6 +248,45 @@ def is_same_track(a, b):
     return get_track_key(a) == get_track_key(b)
 
 
+def should_upgrade_same_track_metadata(current_result, new_result):
+    """
+    Return True when a new recognition appears to be the same recording
+    but contains more useful metadata than the current result.
+    """
+
+    current_title = current_result.get("title", "")
+    new_title = new_result.get("title", "")
+
+    #
+    # Generic "(Live)" -> detailed venue/date
+    #
+    if re.search(r"\(\s*live\s*\)$", current_title, re.IGNORECASE) and re.search(
+        r"\(\s*live\s+at\b", new_title, re.IGNORECASE
+    ):
+        return True
+
+    return False
+
+
+# Replace only the descriptive metadata for the active recording.
+# Playback timing, confirmation state, and scrobble state are stored
+# separately and therefore remain unchanged.
+def upgrade_same_track_metadata(current_result, new_result):
+    updated_result = current_result.copy()
+
+    for field in (
+        "artist",
+        "title",
+        "album",
+        "spotify_album_id",
+        "duration_ms",
+    ):
+        if new_result.get(field):
+            updated_result[field] = new_result[field]
+
+    return updated_result
+
+
 def same_artist(a, b):
     if not a or not b:
         return False
@@ -1228,12 +1267,63 @@ def main():
                             analog_result,
                             new_result,
                         ):
+                            if should_upgrade_same_track_metadata(
+                                analog_result,
+                                new_result,
+                            ):
+                                previous_album = analog_result.get("album")
+                                previous_spotify_album_id = analog_result.get(
+                                    "spotify_album_id"
+                                )
+
+                                analog_result = upgrade_same_track_metadata(
+                                    analog_result,
+                                    new_result,
+                                )
+
+                                print(
+                                    "Upgraded metadata for same analog track: "
+                                    f"{analog_result.get('artist')} - "
+                                    f"{analog_result.get('title')} "
+                                    f"({analog_result.get('album')})"
+                                )
+
+                                send_lastfm_now_playing(analog_result)
+                                last_now_playing_update = time.time()
+
+                                artwork_changed = (
+                                    analog_result.get("album") != previous_album
+                                    or analog_result.get("spotify_album_id")
+                                    != previous_spotify_album_id
+                                )
+
+                                if artwork_changed:
+                                    draw_corner_status(
+                                        screen,
+                                        "Loading Art...",
+                                        safe_x,
+                                        safe_y,
+                                        safe_w,
+                                        safe_h,
+                                    )
+
+                                    analog_art_image = None
+
+                                    artwork_img = get_analog_artwork_image(
+                                        analog_result,
+                                        analog_art_cache,
+                                    )
+
+                                    if artwork_img:
+                                        analog_art_image = artwork_img
+
                             if not analog_track_confirmed:
                                 print(
                                     "Confirmed analog track: "
                                     f"{analog_result.get('artist')} - "
                                     f"{analog_result.get('title')}"
                                 )
+
                             analog_track_confirmed = True
 
                     except Exception as e:
