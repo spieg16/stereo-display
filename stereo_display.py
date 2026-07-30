@@ -23,6 +23,7 @@ import numpy as np
 from lastfm import update_now_playing, scrobble
 
 import re
+from difflib import SequenceMatcher
 
 # Local IP address for the Bluesound/BluOS player.
 NODE_IP = "192.168.4.40"  # Change for your BluOS player
@@ -339,20 +340,6 @@ def normalize_track_title(title):
         if title.endswith(suffix):
             title = title[: -len(suffix)].strip()
 
-    # Treat bracketed remaster wording as release metadata for track
-    # comparison and scrobble deduplication.
-    title = re.sub(
-        r"\s*\[\s*(?:\d{4}\s+)?"
-        r"(?:digital\s+)?"
-        r"remaster(?:ed)?"
-        r"(?:\s+version)?"
-        r"(?:\s+\d{4})?"
-        r"\s*\]$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    ).strip()
-
     # For internal track identity only, treat a trailing live-location
     # parenthetical as metadata rather than a different song. This prevents
     # ACRCloud from creating a false track change when it alternates between:
@@ -369,25 +356,108 @@ def normalize_track_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
-    # Remove anniversary-edition suffixes that ACRCloud may append to track
-    # titles, while leaving unrelated parenthetical title text intact.
-    title = re.sub(
-        r"\s*\(\s*\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?\s*\)$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    ).strip()
+    return title
 
-    # Treat mono/stereo suffixes as recording metadata rather than separate
-    # tracks when comparing ACRCloud results.
-    title = re.sub(
-        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    ).strip()
+
+# Normalize a title more aggressively only when deciding whether ACRCloud
+# returned alternate metadata for the same continuous recording.
+#
+# This is intentionally separate from normalize_track_title(), because slash
+# components and mix/edition wording should not normally collapse distinct
+# tracks throughout the application.
+def normalize_title_for_recording_stability(title):
+    title = normalize_track_title(title)
+
+    # Remove edition wording that ACRCloud may append in stacked parentheses.
+    while True:
+        cleaned = re.sub(
+            r"\s*\(\s*(?:"
+            r"album\s+version|"
+            r"lp\s+version|"
+            r"new\s+mix|"
+            r"original\s+lp\s+excerpt"
+            r")\s*\)\s*$",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        if cleaned == title:
+            break
+
+        title = cleaned
+
+    # Normalize slash spacing and punctuation so harmless catalog formatting
+    # differences do not create separate recording identities.
+    title = re.sub(r"\s*/\s*", "/", title)
+    title = re.sub(r"[^\w/]+", " ", title)
+    title = re.sub(r"\s+", " ", title).strip().lower()
 
     return title
+
+
+# Split a compound ACR title into normalized slash-separated components.
+def get_recording_title_components(title):
+    normalized = normalize_title_for_recording_stability(title)
+
+    return {
+        component.strip() for component in normalized.split("/") if component.strip()
+    }
+
+
+# Return True when two titles are identical after only harmless edition and
+# formatting cleanup. This narrow check is safe even before confirmation.
+def is_exact_same_recording_title_variant(current_result, new_result):
+    if not current_result or not new_result:
+        return False
+
+    if not same_artist(current_result, new_result):
+        return False
+
+    current_title = normalize_title_for_recording_stability(
+        current_result.get("title", "")
+    )
+    new_title = normalize_title_for_recording_stability(new_result.get("title", ""))
+
+    return bool(current_title and current_title == new_title)
+
+
+# Decide whether a new ACR result appears to describe the same recording as
+# the established result, despite using a different release or title variant.
+#
+# Component and slight-spelling matches are intentionally used only after the
+# current track has been confirmed.
+def is_same_recording_variant(current_result, new_result):
+    if not current_result or not new_result:
+        return False
+
+    if not same_artist(current_result, new_result):
+        return False
+
+    current_title = normalize_title_for_recording_stability(
+        current_result.get("title", "")
+    )
+    new_title = normalize_title_for_recording_stability(new_result.get("title", ""))
+
+    if not current_title or not new_title:
+        return False
+
+    if current_title == new_title:
+        return True
+
+    current_components = get_recording_title_components(current_result.get("title", ""))
+    new_components = get_recording_title_components(new_result.get("title", ""))
+
+    # Treat a single title as the same recording when it exactly matches one
+    # component of a slash-separated title.
+    if len(current_components) > 1 and len(new_components) == 1:
+        return next(iter(new_components)) in current_components
+
+    if len(new_components) > 1 and len(current_components) == 1:
+        return next(iter(current_components)) in new_components
+
+    # Allow only a very small spelling difference, such as "Shhh" vs "Shh".
+    return SequenceMatcher(None, current_title, new_title).ratio() >= 0.94
 
 
 # Clean artist names before they are displayed, compared, or sent to Last.fm.
@@ -449,19 +519,6 @@ def clean_lastfm_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
-    # Remove bracketed remaster metadata before display and Last.fm submission.
-    title = re.sub(
-        r"\s*\[\s*(?:\d{4}\s+)?"
-        r"(?:digital\s+)?"
-        r"remaster(?:ed)?"
-        r"(?:\s+version)?"
-        r"(?:\s+\d{4})?"
-        r"\s*\]$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    ).strip()
-
     # Handle:
     #   Rusty Cage - Remastered 2016
     #   Rusty Cage - 2004 Remaster
@@ -473,39 +530,7 @@ def clean_lastfm_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
-    # Remove anniversary-edition suffixes that ACRCloud may append to track
-    # titles, while leaving unrelated parenthetical title text intact.
-    title = re.sub(
-        r"\s*\(\s*\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?\s*\)$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    # Treat mono/stereo suffixes as recording metadata rather than separate
-    # tracks when comparing ACRCloud results.
-    title = re.sub(
-        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    ).strip()
-
     return title
-
-
-# Remove release-edition suffixes from album names before display and scrobbling.
-def clean_album_for_display(album):
-    album = (album or "").strip()
-
-    album = re.sub(
-        r"\s*\(\s*\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?\s*\)$",
-        "",
-        album,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    return album
 
 
 # The stable identity of a track for comparison and scrobble dedupe.
@@ -1004,10 +1029,6 @@ def main():
                             analog_result.get("title", "")
                         )
 
-                        analog_result["album"] = clean_album_for_display(
-                            analog_result.get("album", "")
-                        )
-
                         analog_result["artist"] = clean_artist_for_display(
                             analog_result.get("artist", "")
                         )
@@ -1086,10 +1107,6 @@ def main():
                                 print("No audio detected. Switching back to ART mode.")
                                 continue
 
-                            # Stay in ANALOG mode until the silence threshold is reached, but do not
-                            # send samples already classified as silent to ACRCloud.
-                            continue
-
                         else:
                             analog_silence_count = 0
 
@@ -1109,13 +1126,42 @@ def main():
                                 new_result.get("title", "")
                             )
 
-                            new_result["album"] = clean_album_for_display(
-                                new_result.get("album", "")
-                            )
-
                             new_result["artist"] = clean_artist_for_display(
                                 new_result.get("artist", "")
                             )
+
+                        # Preserve existing metadata when ACRCloud returns a
+                        # different release description for the same recording.
+                        #
+                        # Exact normalized-title variants are safe to suppress
+                        # even before confirmation. Broader component/fuzzy
+                        # matches require a confirmed current track.
+                        if (
+                            new_result
+                            and not is_same_track(analog_result, new_result)
+                            and (
+                                is_exact_same_recording_title_variant(
+                                    analog_result,
+                                    new_result,
+                                )
+                                or (
+                                    analog_track_confirmed
+                                    and is_same_recording_variant(
+                                        analog_result,
+                                        new_result,
+                                    )
+                                )
+                            )
+                        ):
+                            print(
+                                "Preserving analog metadata for same recording: "
+                                f"{analog_result.get('artist')} - "
+                                f"{analog_result.get('title')} "
+                                f"(ignored ACR variant: "
+                                f"{new_result.get('title')} / "
+                                f"{new_result.get('album')})"
+                            )
+                            new_result = analog_result
 
                         if new_result and not is_same_track(
                             analog_result,
