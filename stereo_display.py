@@ -1011,8 +1011,6 @@ def main():
                     )
                     record_sample(2, log=not in_recognition_cooldown)
 
-                    last_analog_check = time.time()
-
                     # Cooldown after a failed initial recognition. We still sample for RMS,
                     # but skip expensive ACRCloud requests until the cooldown expires.
                     if in_recognition_cooldown:
@@ -1120,8 +1118,6 @@ def main():
                             screen, "Recording...", safe_x, safe_y, safe_w, safe_h
                         )
                         record_sample()
-                        # Always reset the refresh timer after sampling, even if the sample is silent.
-                        last_analog_check = time.time()
 
                         if is_sample_silent():
                             analog_silence_count += 1
@@ -1325,6 +1321,8 @@ def main():
                                 )
 
                             analog_track_confirmed = True
+
+                        last_analog_check = time.time()
 
                     except Exception as e:
                         print(f"Analog recheck failed: {e}")
