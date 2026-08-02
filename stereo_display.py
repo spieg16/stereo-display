@@ -379,6 +379,13 @@ def normalize_track_title(title):
         if title.endswith(suffix):
             title = title[: -len(suffix)].strip()
 
+    title = re.sub(
+        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # For internal track identity only, treat a trailing live-location
     # parenthetical as metadata rather than a different song. This prevents
     # ACRCloud from creating a false track change when it alternates between:
@@ -545,6 +552,13 @@ def clean_lastfm_title(title):
     for suffix in suffixes:
         if lower_title.endswith(suffix):
             return title[: -len(suffix)].strip()
+
+    title = re.sub(
+        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
 
     title = re.sub(
         r"\s*\(\s*(?:\d{4}\s+)?"
