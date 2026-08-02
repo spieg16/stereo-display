@@ -681,7 +681,9 @@ def score_spotify_track(
 ):
     score = 0
 
-    acr_title = normalize_metadata_title_for_match(acr_result.get("title", ""))
+    acr_title = normalize_metadata_title_for_match(
+        clean_metadata_title_for_display(acr_result.get("title", ""))
+    )
     spotify_title = normalize_metadata_title_for_match(spotify_track.get("name", ""))
 
     if not protected_keyword:
@@ -812,6 +814,15 @@ def find_best_spotify_metadata_match(acr_result):
     scored = []
 
     for track in tracks:
+        # Temporary Spotify candidate diagnostics.
+        # Uncomment when troubleshooting search/scoring behavior.
+        #        print(
+        #            f"{track.get('artists', [{}])[0].get('name', '')} | "
+        #            f"{track.get('name', '')} | "
+        #            f"{track.get('album', {}).get('name', '')} | "
+        #            f"{track.get('album', {}).get('album_type', '')} | "
+        #            f"score={score_spotify_track(acr_result, track, protected_keyword)}"
+        #        )
         if not spotify_artist_matches(
             acr_result.get("artist", ""),
             track.get("artists", []),
