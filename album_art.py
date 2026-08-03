@@ -295,6 +295,18 @@ def normalize_metadata_title_for_match(value):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Treat punctuation differences as equivalent during Spotify title matching.
+    #
+    # Example:
+    #   Do Right Woman, Do Right Man
+    #   Do Right Woman - Do Right Man
+    value = re.sub(
+        r"\s*[-–—,:;/]\s*",
+        " ",
+        value,
+    )
+    value = re.sub(r"\s+", " ", value).strip()
+
     return value
 
 
@@ -816,13 +828,13 @@ def find_best_spotify_metadata_match(acr_result):
     for track in tracks:
         # Temporary Spotify candidate diagnostics.
         # Uncomment when troubleshooting search/scoring behavior.
-        #        print(
-        #            f"{track.get('artists', [{}])[0].get('name', '')} | "
-        #            f"{track.get('name', '')} | "
-        #            f"{track.get('album', {}).get('name', '')} | "
-        #            f"{track.get('album', {}).get('album_type', '')} | "
-        #            f"score={score_spotify_track(acr_result, track, protected_keyword)}"
-        #        )
+        # print(
+        #    f"{track.get('artists', [{}])[0].get('name', '')} | "
+        #    f"{track.get('name', '')} | "
+        #    f"{track.get('album', {}).get('name', '')} | "
+        #    f"{track.get('album', {}).get('album_type', '')} | "
+        #    f"score={score_spotify_track(acr_result, track, protected_keyword)}"
+        # )
         if not spotify_artist_matches(
             acr_result.get("artist", ""),
             track.get("artists", []),
