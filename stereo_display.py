@@ -265,6 +265,17 @@ def should_upgrade_same_track_metadata(current_result, new_result):
     ):
         return True
 
+    # Prefer a later base-title result over an initially identified single edit
+    # when the stability normalization shows that they otherwise describe the
+    # same recording.
+    if (
+        is_single_edit_title(current_title)
+        and not is_single_edit_title(new_title)
+        and normalize_title_for_recording_stability(current_title)
+        == normalize_title_for_recording_stability(new_title)
+    ):
+        return True
+
     return False
 
 
@@ -405,6 +416,16 @@ def normalize_track_title(title):
     return title
 
 
+def is_single_edit_title(title):
+    return bool(
+        re.search(
+            r"\s*\(\s*single\s+edit\s*\)\s*$",
+            title or "",
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 # Normalize a title more aggressively only when deciding whether ACRCloud
 # returned alternate metadata for the same continuous recording.
 #
@@ -420,6 +441,7 @@ def normalize_title_for_recording_stability(title):
             r"\s*\(\s*(?:"
             r"album\s+version|"
             r"lp\s+version|"
+            r"single\s+edit|"
             r"new\s+mix|"
             r"original\s+lp\s+excerpt"
             r")\s*\)\s*$",
@@ -1183,12 +1205,8 @@ def main():
                                 new_result.get("artist", "")
                             )
 
-                        # Preserve existing metadata when ACRCloud returns a
-                        # different release description for the same recording.
-                        #
-                        # Exact normalized-title variants are safe to suppress
-                        # even before confirmation. Broader component/fuzzy
-                        # matches require a confirmed current track.
+                        # Prevent ACRCloud from oscillating between alternate
+                        # release descriptions of the same continuous recording.
                         if (
                             new_result
                             and not is_same_track(analog_result, new_result)
@@ -1206,14 +1224,66 @@ def main():
                                 )
                             )
                         ):
-                            print(
-                                "Preserving analog metadata for same recording: "
-                                f"{analog_result.get('artist')} - "
-                                f"{analog_result.get('title')} "
-                                f"(ignored ACR variant: "
-                                f"{new_result.get('title')} / "
-                                f"{new_result.get('album')})"
-                            )
+                            if should_upgrade_same_track_metadata(
+                                analog_result,
+                                new_result,
+                            ):
+                                previous_album = analog_result.get("album")
+                                previous_spotify_album_id = analog_result.get(
+                                    "spotify_album_id"
+                                )
+
+                                analog_result = upgrade_same_track_metadata(
+                                    analog_result,
+                                    new_result,
+                                )
+
+                                print(
+                                    "Upgraded metadata for same analog track: "
+                                    f"{analog_result.get('artist')} - "
+                                    f"{analog_result.get('title')} "
+                                    f"({analog_result.get('album')})"
+                                )
+
+                                send_lastfm_now_playing(analog_result)
+                                last_now_playing_update = time.time()
+
+                                artwork_changed = (
+                                    analog_result.get("album") != previous_album
+                                    or analog_result.get("spotify_album_id")
+                                    != previous_spotify_album_id
+                                )
+
+                                if artwork_changed:
+                                    draw_corner_status(
+                                        screen,
+                                        "Loading Art...",
+                                        safe_x,
+                                        safe_y,
+                                        safe_w,
+                                        safe_h,
+                                    )
+
+                                    analog_art_image = None
+
+                                    artwork_img = get_analog_artwork_image(
+                                        analog_result,
+                                        analog_art_cache,
+                                    )
+
+                                    if artwork_img:
+                                        analog_art_image = artwork_img
+
+                            else:
+                                print(
+                                    "Preserving analog metadata for same recording: "
+                                    f"{analog_result.get('artist')} - "
+                                    f"{analog_result.get('title')} "
+                                    f"(ignored ACR variant: "
+                                    f"{new_result.get('title')} / "
+                                    f"{new_result.get('album')})"
+                                )
+
                             new_result = analog_result
 
                         if new_result and not is_same_track(
