@@ -305,6 +305,82 @@ def same_artist(a, b):
     return a.get("artist", "").strip().lower() == b.get("artist", "").strip().lower()
 
 
+# Detect ACRCloud results where a label, series, or catalog name is returned
+# as the artist even though the album title identifies the active artist.
+def is_catalog_series_artist_variant(current_result, new_result):
+    if not current_result or not new_result:
+        return False
+
+    if same_artist(current_result, new_result):
+        return False
+
+    current_title = normalize_track_title(current_result.get("title", ""))
+    new_title = normalize_track_title(new_result.get("title", ""))
+
+    if not current_title or current_title != new_title:
+        return False
+
+    current_artist = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        current_result.get("artist", "").casefold(),
+    ).strip()
+
+    new_album = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        new_result.get("album", "").casefold(),
+    ).strip()
+
+    if not current_artist or not new_album:
+        return False
+
+    return bool(
+        re.search(
+            rf"\b{re.escape(current_artist)}\b",
+            new_album,
+        )
+    )
+
+
+# Replace an apparent catalog/series artist with the artist named in the album
+# title when the current ACR result otherwise lacks a trustworthy artist.
+def correct_catalog_series_artist_from_album(result):
+    if not result:
+        return result
+
+    corrected = result.copy()
+
+    artist = corrected.get("artist", "").strip()
+    album = corrected.get("album", "").strip()
+
+    if not artist or not album:
+        return corrected
+
+    # Match common album-title forms such as:
+    # "The Very Best Of John Coltrane"
+    match = re.search(
+        r"\b(?:best\s+of|very\s+best\s+of|essential)\s+(.+)$",
+        album,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return corrected
+
+    album_artist = match.group(1).strip()
+
+    # Only replace short catalog/series-style artist names.
+    if len(artist.split()) <= 3 and artist.casefold() not in album_artist.casefold():
+        print(
+            "Corrected catalog-series artist from album metadata: "
+            f"{artist} -> {album_artist}"
+        )
+        corrected["artist"] = album_artist
+
+    return corrected
+
+
 def get_analog_artwork_image(result, analog_art_cache):
     # Fetch analog artwork with an in-memory cache so repeated artwork lookups
     # do not hit external APIs unnecessarily. Only reuse cached artwork when an
@@ -1094,6 +1170,9 @@ def main():
                         # metadata with a cleaner Spotify match.
 
                         analog_result = correct_metadata_with_spotify(analog_result)
+                        analog_result = correct_catalog_series_artist_from_album(
+                            analog_result
+                        )
 
                         # Store the cleaned title in the active result so the CRT,
                         # internal track comparison, and Last.fm all see the same
@@ -1197,6 +1276,9 @@ def main():
 
                         if new_result:
                             new_result = correct_metadata_with_spotify(new_result)
+                            new_result = correct_catalog_series_artist_from_album(
+                                new_result
+                            )
                             new_result["title"] = clean_lastfm_title(
                                 new_result.get("title", "")
                             )
@@ -1204,6 +1286,28 @@ def main():
                             new_result["artist"] = clean_artist_for_display(
                                 new_result.get("artist", "")
                             )
+
+                        # Ignore ACRCloud catalog/series names supplied as the
+                        # artist when the title matches the active track and
+                        # the new album explicitly identifies the active artist.
+                        if (
+                            new_result
+                            and not is_same_track(analog_result, new_result)
+                            and is_catalog_series_artist_variant(
+                                analog_result,
+                                new_result,
+                            )
+                        ):
+                            print(
+                                "Preserving analog metadata after catalog-series "
+                                "artist match: "
+                                f"{analog_result.get('artist')} - "
+                                f"{analog_result.get('title')} "
+                                f"(ignored ACR artist: "
+                                f"{new_result.get('artist')} / "
+                                f"{new_result.get('album')})"
+                            )
+                            new_result = analog_result
 
                         # Prevent ACRCloud from oscillating between alternate
                         # release descriptions of the same continuous recording.
