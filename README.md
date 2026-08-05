@@ -1,6 +1,6 @@
 # Stereo Display Documentation
 
-Last updated: 2026-07-30
+Last updated: 2026-08-05
 
 ## Overview
 
@@ -9,7 +9,7 @@ Stereo Display is a Raspberry Pi project that provides a full-screen now-playing
 The current application has two operating modes:
 
 - **ART Mode** - displays BluOS album artwork from the BluOS local API.
-- **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, performs conservative Spotify metadata correction (including protected-recording inference when appropriate), retrieves artwork, updates Last.fm Now Playing, scrobbles tracks, and returns to ART Mode after silence.
+- **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, applies conservative Spotify metadata correction and stability safeguards, retrieves artwork, updates Last.fm Now Playing, scrobbles tracks, and returns to ART Mode after silence.
 
 The app is primarily run from `stereo_display.py`.
 
@@ -90,14 +90,16 @@ Current workflow:
 5. Once audio is detected, the app waits briefly before fingerprinting.
 6. A 20-second initial sample is sent to ACRCloud.
 7. If recognition fails, a 30-second fallback sample is attempted.
-8. If recognized, the result is passed through conservative Spotify metadata correction. Protected recordings (live, unplugged, concert, etc.) are matched conservatively, and Spotify compilation matches may be used to infer missing protected-recording metadata.
-9. The active title is cleaned before display, internal comparison, and Last.fm submission.
-10. The app retrieves artwork, sends Last.fm Now Playing, and displays the track.
-11. During playback, the app records 12-second recheck samples every 30 seconds.
-12. If a later ACRCloud match identifies the same recording with more specific live title or release metadata, the app upgrades the active metadata in place without treating it as a track change.
-13. Track changes scrobble the previous track when it is eligible.
-14. Repeated silence scrobbles the final eligible track and returns to ART Mode.
-15. The Sayo LED turns off.
+8. If recognized, the result is passed through conservative Spotify metadata correction.
+9. Generic title metadata and punctuation differences are normalized for Spotify candidate scoring, while meaningful recording variants remain protected.
+10. Protected recordings (live, unplugged, concert, etc.) are matched only to equivalent protected recordings; Spotify compilation results may also provide evidence that ACRCloud omitted the protected marker.
+11. The active title and artist are cleaned before display, internal comparison, and Last.fm submission.
+12. The app retrieves artwork, sends Last.fm Now Playing, and displays the track.
+13. During playback, the app records 12-second recheck samples every 30 seconds. The interval begins after recognition and artwork processing finish.
+14. Later ACRCloud matches can upgrade or preserve metadata for the same continuous recording without creating false track changes.
+15. Track changes scrobble the previous track when it is eligible.
+16. Repeated silence scrobbles the final eligible track and returns to ART Mode.
+17. The Sayo LED turns off.
 
 ## Source Files
 
@@ -114,6 +116,8 @@ Responsibilities:
 - Silence detection and retry timing.
 - Last.fm Now Playing refreshes and scrobble calls.
 - Spotify metadata correction orchestration.
+- Same-recording stabilization and metadata upgrades.
+- Catalog/series artist correction when an album title identifies the true artist.
 - Sayo LED integration.
 - CRT-safe layout.
 
@@ -186,7 +190,9 @@ Responsibilities:
 - Caches the Spotify token in memory.
 - Uses Spotify album IDs when available.
 - Corrects ACRCloud metadata with a conservative Spotify lookup.
-- Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe metadata improvements between equivalent protected recordings.
+- Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
+- Infers missing protected-recording metadata from matching Spotify compilation results.
+- Normalizes generic ACR title suffixes and punctuation for Spotify candidate scoring.
 - Falls back to iTunes artwork search when Spotify artwork is unavailable.
 - Downloads artwork as RGB PIL images.
 
@@ -209,13 +215,13 @@ Intended runtime path on the Pi:
 /home/spieg16/repos/stereo-display
 ```
 
-Current ZIP contents:
+Current repository contents:
 
 ```text
 README.md
 README.pdf
 .gitignore
-acr_config.py
+acr_config_sample.py
 album_art.py
 analog_recognition.py
 archive/artwork_only_display.py
@@ -224,15 +230,15 @@ archive/lastfm_auth.py
 assets/stereo-display.desktop
 assets/logrotate.d_stereo-display
 assets/sayo-led
-stereo_display_dependencies.txt
-stereo_display.py
 lastfm.py
-lastfm_config.py
+lastfm_config_sample.py
 requirements.txt
-spotify_config.py
+spotify_config_sample.py
+stereo_display.py
+stereo_display_dependencies.txt
 ```
 
-The config files in the shared archive are redacted. The virtual environment and runtime log are intentionally not part of the clean project snapshot.
+The public repository includes sample configuration files rather than live credentials. The virtual environment and runtime log are intentionally not committed.
 
 ## Dependencies
 
@@ -281,7 +287,7 @@ hidapi
 
 The config files are intentionally separate from the main code so secrets can be redacted, regenerated, or replaced without editing the application logic.
 
-### `acr_config.py`
+### `acr_config.py` / `acr_config_sample.py`
 
 Required variables:
 
@@ -291,7 +297,7 @@ ACR_ACCESS_KEY = "..."
 ACR_ACCESS_SECRET = "..."
 ```
 
-### `spotify_config.py`
+### `spotify_config.py` / `spotify_config_sample.py`
 
 Required variables:
 
@@ -300,7 +306,7 @@ SPOTIFY_CLIENT_ID = "..."
 SPOTIFY_CLIENT_SECRET = "..."
 ```
 
-### `lastfm_config.py`
+### `lastfm_config.py` / `lastfm_config_sample.py`
 
 Required variables:
 
@@ -390,18 +396,21 @@ Examples of problems it is meant to reduce:
 Candidate scoring:
 
 ```text
-50 points - exact track title match
+50 points - exact normalized track title match
 35 points - exact primary artist match
 15 points - Spotify album_type == album
 20 points - meaningful album-word overlap with the ACRCloud album
 -30 points - obvious compilation album penalty
+-30 points - single-style release penalty
 ```
 
 Only candidates scoring at least 85 are eligible.
 
+Before scoring, generic ACR title metadata such as album-version, LP-version, remaster, mono-version, and stereo-version wording is removed. Punctuation differences such as commas, colons, slashes, and dashes are normalized only for matching, so titles such as `Do Right Woman, Do Right Man` and `Do Right Woman - Do Right Man` can compare equally.
+
 The album-word overlap bonus is intentionally not a hard requirement. ACRCloud can identify the correct recording with messy compilation/reissue metadata, so Spotify should still be able to improve those cases when it has a better album candidate.
 
-Obvious compilation albums can still win when no better full-album candidate exists, but they are penalized so `best of`, `greatest hits`, `essential`, `anthology`, `collection`, `compilation`, and `singles` releases do not beat plausible original-album candidates too easily.
+Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Single-style releases are also penalized so plausible original albums are preferred when available.
 
 ### Primary Artist Safeguard
 
@@ -430,35 +439,54 @@ If Spotify cannot find a trustworthy match, the original ACRCloud result is retu
 
 ### Protected Recordings
 
-Live, unplugged, concert, acoustic, and similar recordings receive additional protection during Spotify metadata correction.
+Live, unplugged, concert, and similar recordings receive additional protection during Spotify metadata correction.
 
-Rather than performing a general Spotify search, the application performs a conservative search that only accepts Spotify results representing the same protected recording type and underlying performance.
+Rather than skipping Spotify entirely, the app performs a conservative search and accepts only candidates that represent the same protected recording type and underlying base title. Embedded ACRCloud Spotify IDs are removed before this search because they can point to a studio release even when ACRCloud identified a live recording.
 
-For example:
+If ACRCloud omits the protected marker from the title, the app can infer it when Spotify returns a matching protected track on the same ACRCloud album. This allows a compilation result to establish that the recording is live, after which equivalent live candidates from original albums or archival releases can compete normally.
+
+Examples handled by this logic include:
 
 ```text
-Badlands (Live at Madison Square Garden, New York, NY - June/July 2000)
+Sivad (Live)
+Sivad - Live at the Cellar Door, Washington, DC - December 1970
+
+Little Church
+Little Church - Live at the Cellar Door, Washington, DC - December 1970
 ```
 
-will not be normalized to the studio recording simply because the title matches.
-
-If ACRCloud omits the protected keyword from the title but Spotify returns a matching result on the same ACRCloud album that includes it, the application infers the protected recording type and allows equivalent protected recordings to compete normally.
-
-This improves cases where ACRCloud identifies the correct live performance but associates it with a compilation or anthology while preserving protection against accidental studio substitutions.
-
-When protected-recording handling is active, embedded ACRCloud Spotify IDs are ignored before artwork lookup so artwork is obtained from the selected Spotify correction rather than potentially incorrect embedded IDs.
-
+This protects live material from studio normalization while still allowing safer album and artwork improvements. Multiple legitimate releases of the same performance may still exist, so the selected album remains heuristic.
 ### Title Matching for Spotify Lookup
 
-Spotify sometimes includes descriptive parentheticals that ACRCloud omits, such as:
+Spotify sometimes formats the same title differently from ACRCloud. Matching normalization handles:
 
 ```text
-Give Me Your Love
-Give Me Your Love (Love Song)
+Album Version / LP Version metadata
+mono / stereo version metadata
+remaster wording
+bracketed remaster wording
+comma, colon, slash, and dash differences
+safe descriptive aliases in trailing parentheses
 ```
 
-For Spotify candidate matching only, the code normalizes titles enough to treat safe descriptive aliases as equivalent. Before Spotify searching, generic release metadata such as remaster wording is removed from the search title while preserving meaningful recording variants such as mixes, alternate takes, live recordings, mono, and stereo versions. It does not collapse meaningful variants such as `Live`, `Reprise`, `Part`, `Alternate Take`, `Demo`, `Mix`, `Edit`, `Instrumental`, `Mono`, or `Stereo`.
+The cleaned ACR title is used for Spotify scoring, while the Spotify candidate title is left intact except for the normal narrow matching rules. This prevents generic ACR suffixes from blocking an otherwise exact Spotify match.
 
+Meaningful recording variants remain protected, including:
+
+```text
+Live
+Reprise
+Part
+Alternate Take
+Demo
+Mix
+Edit
+Instrumental
+Mono
+Stereo
+```
+
+The code does not globally collapse these variants into one track.
 ### Metadata Cleanup for Display and Last.fm
 
 After ACRCloud and any Spotify correction, the active title and artist are cleaned and stored back into the result used by the CRT display, internal track comparison, and Last.fm.
@@ -481,6 +509,10 @@ Remastered Version
 2013 Remaster
 2001 Digital Remaster
 [2019 Remaster]
+Mono
+Stereo
+Mono Version
+Stereo Version
 ```
 
 Generic bracketed remaster tags (for example `[2019 Remaster]`) are also removed while preserving meaningful version information such as `(1969 Mix)`.
@@ -515,6 +547,16 @@ Original Soundtrack
 White Album
 ```
 
+### Spotify Album Selection
+
+When multiple Spotify candidates are eligible, the app sorts them by:
+
+1. Highest confidence score.
+2. Earliest Spotify release date.
+3. Full albums before singles and EPs.
+4. Shorter album title when everything else is effectively equal.
+
+This often favors original albums over later compilations or remasters, but Spotify release dates can describe the recording date, archival source, or reissue metadata inconsistently. Selection remains heuristic rather than Discogs-level release matching.
 ## Artwork Behavior
 
 Analog artwork lookup uses a layered approach:
@@ -533,7 +575,7 @@ Artwork is cached in memory during the current app run. Cache keys use Spotify a
 
 The app uses Last.fm in three ways:
 
-- Now Playing is sent when a track is first recognized or when a track changes.
+- Now Playing is sent when a track is first recognized, when a track changes, or when metadata for the same active recording is upgraded in place.
 - Now Playing is refreshed every 120 seconds while an identified analog track is active.
 - Scrobbles are sent when a track change occurs or when silence returns the app to ART Mode.
 
@@ -588,8 +630,27 @@ Badlands
 
 The live detail is still preserved for display and Last.fm when ACRCloud provides it.
 
+A separate recording-stability normalizer is used only to prevent ACRCloud from oscillating between alternate release descriptions of the same continuous audio. It can treat harmless differences such as stacked edition wording, minor spelling differences, slash-separated compound titles, and single-edit/base-title variants as the same recording under controlled conditions.
+
+For single-edit oscillation, the app does not globally erase `Single Edit`. Instead, if ACRCloud alternates between a compilation-labeled single edit and a base-title result tied to a stronger album, the active metadata can be upgraded to the base result and preserved if ACRCloud later flips back.
+
+For later same-track matches, the app may upgrade descriptive metadata in place—for example, replacing a generic `(Live)` title with a venue/date-specific live title. The track timer, confirmation state, and scrobble eligibility are preserved while artwork and Last.fm Now Playing are refreshed.
+
 If a later recognition identifies the same recording with more descriptive live metadata—for example changing `Sivad (Live)` to `Sivad (Live at the Cellar Door, Washington, DC - December 1970)`—the app upgrades the active metadata without treating it as a track change. Playback timing, confirmation state, and scrobble eligibility are preserved, while artwork and Last.fm Now Playing are refreshed using the improved metadata.
 
+
+### Catalog/Series Artist Correction
+
+ACRCloud occasionally returns a label, anniversary series, or catalog name as the artist. For example:
+
+```text
+Artist: Atlantic 60th
+Album: The Very Best Of John Coltrane
+```
+
+When a compilation-style album title explicitly identifies the actual artist, the app can replace the short catalog/series artist with the artist named in the album. This correction is applied to both initial identifications and later rechecks.
+
+A separate recheck guard also preserves an established artist when a later same-title result supplies a different catalog-style artist but its album still names the established artist.
 
 A separate protection exists for different-artist changes.
 
@@ -653,6 +714,23 @@ black ~/repos/stereo-display/stereo_display.py ~/repos/stereo-display/album_art.
 sudo reboot
 ```
 
+For a quick Python-only test, the process can be stopped and relaunched with the virtual-environment interpreter in unbuffered mode:
+
+```bash
+pkill -f stereo_display.py
+sleep 1
+cd ~/repos/stereo-display
+nohup ./venv/bin/python -u stereo_display.py     >> stereo-display.log 2>&1 &
+```
+
+After a quick restart, verify that only one instance is running:
+
+```bash
+pgrep -af stereo_display.py
+```
+
+Overlapping instances can both call `arecord`, producing capture failures.
+
 ## Logging
 
 Runtime log:
@@ -695,6 +773,9 @@ ACR Match: Sonic Youth - Teen Age Riot (Album Version) (album=Daydream Nation (D
 Now Playing: Sonic Youth - Teen Age Riot (Daydream Nation)
 Last.fm Now Playing: Sonic Youth - Teen Age Riot
 Confirmed analog track: Sonic Youth - Teen Age Riot
+Inferred protected recording from matching Spotify album: Miles Davis - Little Church (live)
+Upgraded metadata for same analog track: The Who - Who Are You (Who Are You)
+Corrected catalog-series artist from album metadata: Atlantic 60th -> John Coltrane
 Upgraded metadata for same analog track: Miles Davis - Sivad (Live at the Cellar Door, Washington, DC - December 1970) (Live-Evil)
 Track Change: Eagles - Those Shoes (score=100)
 Last.fm Scrobble: Eagles - Heartache Tonight
@@ -716,7 +797,7 @@ False matches are possible, especially on records that have been heavily sampled
 
 ### Spotify correction is conservative, not authoritative
 
-Spotify metadata correction is deliberately best-effort. If Spotify cannot confidently identify the same artist/title, the original ACRCloud result is retained. For protected recordings, correction is limited to equivalent recording types, but multiple legitimate releases of the same performance may still exist, so album selection remains heuristic. This matters for rare, private, bootleg, regional, or non-streaming records.
+Spotify metadata correction is deliberately best-effort. If Spotify cannot confidently identify the same artist/title, the original ACRCloud result is retained. This matters for rare, private, bootleg, regional, or non-streaming records.
 
 ### Album metadata can still vary
 
@@ -731,6 +812,16 @@ For a narrow class of same-track live recordings, the application can also upgra
 ### Compilation and release selection remain heuristic
 
 The code penalizes obvious compilations and rewards album-word overlap, but it can still choose an undesired release when Spotify search results are incomplete, ACRCloud album metadata is wrong, or multiple releases look equally plausible.
+
+### Occasional pygame system-font warning
+
+Pygame may occasionally log:
+
+```text
+UserWarning: Process running 'fc-list' timed-out! System fonts cannot be loaded on your platform
+```
+
+If text still renders normally and `fc-list` completes quickly when run manually, this can be a transient pygame/Fontconfig warning. No code change is required unless it becomes repeatable or causes incorrect font rendering.
 
 ### Button responsiveness depends on sample length
 
@@ -782,8 +873,7 @@ Possible future improvements:
 
 - Cache Spotify metadata corrections by normalized artist/title to reduce repeated Spotify searches.
 - Add a manual override database for records ACRCloud cannot identify correctly.
-- Further improve release-selection heuristics for recordings that appear on multiple legitimate releases (original albums, deluxe editions, session collections, soundtracks, compilations, and retail bundles).
-- Investigate preserving confirmed metadata when later ACRCloud recognitions appear to describe the same continuous recording using alternate release metadata.
+- Further improve release-selection heuristics for recordings that appear on multiple legitimate releases, especially where Spotify dates or archival releases make the canonical album ambiguous.
 - Add an HDMI-specific UI if moving away from the CRT.
 - Investigate Pi 5 migration for more headroom.
 - Revisit waveform/spectrum visualization only if the Sony VT-M5 repair path fails.
