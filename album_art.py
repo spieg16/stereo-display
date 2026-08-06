@@ -16,6 +16,15 @@ from spotify_config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 _spotify_token = None
 _spotify_token_expires_at = 0
 
+# Allow narrowly tested catalog-credit differences without enabling general
+# fuzzy artist matching. Both sides must use the normalized form returned by
+# normalize_artist_for_match(), which removes a leading "The".
+SPOTIFY_ARTIST_EQUIVALENTS = {
+    "frank zappa": {
+        "mothers of invention",
+    },
+}
+
 
 def download_artwork_image(url):
     # Return None instead of failing when there is no usable artwork URL.
@@ -536,12 +545,20 @@ def spotify_artist_matches(acr_artist, spotify_artists):
     if not spotify_artists:
         return False
 
-    acr_artist = normalize_artist_for_match(acr_artist)
-    primary_spotify_artist = normalize_artist_for_match(
+    normalized_acr_artist = normalize_artist_for_match(acr_artist)
+    normalized_spotify_artist = normalize_artist_for_match(
         spotify_artists[0].get("name", "")
     )
 
-    return acr_artist == primary_spotify_artist
+    if normalized_acr_artist == normalized_spotify_artist:
+        return True
+
+    allowed_spotify_artists = SPOTIFY_ARTIST_EQUIVALENTS.get(
+        normalized_acr_artist,
+        set(),
+    )
+
+    return normalized_spotify_artist in allowed_spotify_artists
 
 
 # Return the protected recording type identified by ACRCloud metadata.
