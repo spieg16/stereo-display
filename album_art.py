@@ -541,25 +541,38 @@ def normalize_artist_for_match(value):
 #
 # This should stay narrow. Do not broaden it to fuzzy matching or "any artist"
 # matching unless there is a specific, tested reason.
+# Return True when Spotify's primary artist matches any ACRCloud artist credit.
+#
+# ACRCloud sometimes joins multiple artist credits with "|" (for example,
+# "Frank Zappa|The Mothers Of Invention"). Each component is checked
+# independently using the same narrow equivalence rules as a normal artist.
 def spotify_artist_matches(acr_artist, spotify_artists):
     if not spotify_artists:
         return False
 
-    normalized_acr_artist = normalize_artist_for_match(acr_artist)
     normalized_spotify_artist = normalize_artist_for_match(
         spotify_artists[0].get("name", "")
     )
 
-    if normalized_acr_artist == normalized_spotify_artist:
-        return True
+    acr_artist_candidates = [
+        normalize_artist_for_match(candidate)
+        for candidate in (acr_artist or "").split("|")
+        if candidate.strip()
+    ]
 
-    allowed_spotify_artists = SPOTIFY_ARTIST_EQUIVALENTS.get(
-        normalized_acr_artist,
-        set(),
-    )
+    for normalized_acr_artist in acr_artist_candidates:
+        if normalized_acr_artist == normalized_spotify_artist:
+            return True
 
-    return normalized_spotify_artist in allowed_spotify_artists
+        allowed_spotify_artists = SPOTIFY_ARTIST_EQUIVALENTS.get(
+            normalized_acr_artist,
+            set(),
+        )
 
+        if normalized_spotify_artist in allowed_spotify_artists:
+            return True
+
+    return False
 
 # Return the protected recording type identified by ACRCloud metadata.
 #
