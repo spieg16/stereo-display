@@ -23,8 +23,10 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
     "frank zappa": {
         "mothers of invention",
     },
+    "mothers of invention": {
+        "frank zappa",
+    },
 }
-
 
 def download_artwork_image(url):
     # Return None instead of failing when there is no usable artwork URL.
