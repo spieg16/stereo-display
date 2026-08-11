@@ -263,6 +263,15 @@ def fetch_artwork_for_analog_result(result):
 def normalize_metadata_title_for_match(value):
     value = normalize_metadata_text(value)
 
+    # Treat an explicit "Master Take" suffix as the canonical recording during
+    # Spotify matching, while preserving alternate/take-number distinctions.
+    value = re.sub(
+        r"\s*\(\s*master\s+take\s*\)\s*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # Spotify sometimes appends a descriptive alias that ACRCloud omits,
     # such as "Give Me Your Love (Love Song)". Ignore a trailing
     # parenthetical only when it does not describe a distinct recording.
@@ -813,7 +822,17 @@ def find_best_spotify_metadata_match(acr_result):
 
     search_title = title
 
+    # ACRCloud may label the released album performance as "(Master Take)".
+    # Search Spotify by the base title so the original album release can compete.
+    search_title = re.sub(
+        r"\s*\(\s*master\s+take\s*\)\s*$",
+        "",
+        search_title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     if protected_keyword:
+
         protected_base_title = normalize_protected_recording_base_title(title)
 
         if protected_base_title:
