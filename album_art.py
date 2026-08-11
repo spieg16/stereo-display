@@ -28,6 +28,7 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
     },
 }
 
+
 def download_artwork_image(url):
     # Return None instead of failing when there is no usable artwork URL.
     if not url:
@@ -438,7 +439,7 @@ def clean_metadata_title_for_display(title):
     ).strip()
 
     title = re.sub(
-        r"\s*\(\s*(?:mono|stereo)(?:\s+version)?\s*\)$",
+        r"\s*[\(\[]\s*(?:mono|stereo)(?:\s+version)?\s*[\)\]]$",
         "",
         title,
         flags=re.IGNORECASE,
@@ -575,6 +576,7 @@ def spotify_artist_matches(acr_artist, spotify_artists):
             return True
 
     return False
+
 
 # Return the protected recording type identified by ACRCloud metadata.
 #
