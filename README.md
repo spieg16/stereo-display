@@ -1,6 +1,6 @@
 # Stereo Display Documentation
 
-Last updated: 2026-08-05
+Last updated: 2026-08-11
 
 ## Overview
 
@@ -193,6 +193,8 @@ Responsibilities:
 - Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
 - Infers missing protected-recording metadata from matching Spotify compilation results.
 - Normalizes generic ACR title suffixes and punctuation for Spotify candidate scoring.
+- Supports narrowly defined artist-credit equivalences for known catalog-credit differences.
+- Splits compound ACR artist credits joined with `|` and checks each component independently during Spotify matching.
 - Falls back to iTunes artwork search when Spotify artwork is unavailable.
 - Downloads artwork as RGB PIL images.
 
@@ -436,6 +438,29 @@ Curtis Mayfield - Give Me Your Love
 ```
 
 If Spotify cannot find a trustworthy match, the original ACRCloud result is returned unchanged. This protects obscure records and records that are not available on Spotify.
+
+### Known Artist-Credit Equivalences
+
+The primary-artist safeguard remains intentionally strict, but a small explicit equivalence map is used for known, tested catalog-credit differences that would otherwise reject the correct Spotify candidate.
+
+Current behavior includes bidirectional matching between:
+
+```text
+Frank Zappa
+The Mothers Of Invention
+```
+
+This is a matching rule only. It does not globally rewrite artist names. After a successful Spotify correction, the display and Last.fm use Spotify's canonical primary-artist credit.
+
+ACRCloud can also return multiple artist credits joined with a pipe, for example:
+
+```text
+Frank Zappa|The Mothers Of Invention
+```
+
+For Spotify matching only, the ACR artist field is split on `|`, each component is normalized independently, and the Spotify primary artist is accepted if it matches any component directly or through the explicit equivalence map.
+
+This keeps artist matching narrow while handling real catalog-credit differences without enabling fuzzy artist matching.
 
 ### Protected Recordings
 
@@ -776,6 +801,7 @@ Confirmed analog track: Sonic Youth - Teen Age Riot
 Inferred protected recording from matching Spotify album: Miles Davis - Little Church (live)
 Upgraded metadata for same analog track: The Who - Who Are You (Who Are You)
 Corrected catalog-series artist from album metadata: Atlantic 60th -> John Coltrane
+Spotify metadata correction: Frank Zappa - Go Cry On Somebody Else's Shoulder (...) -> The Mothers Of Invention - Go Cry On Somebody Else's Shoulder (Spotify album=Freak Out!, ...)
 Upgraded metadata for same analog track: Miles Davis - Sivad (Live at the Cellar Door, Washington, DC - December 1970) (Live-Evil)
 Track Change: Eagles - Those Shoes (score=100)
 Last.fm Scrobble: Eagles - Heartache Tonight
@@ -812,6 +838,12 @@ For a narrow class of same-track live recordings, the application can also upgra
 ### Compilation and release selection remain heuristic
 
 The code penalizes obvious compilations and rewards album-word overlap, but it can still choose an undesired release when Spotify search results are incomplete, ACRCloud album metadata is wrong, or multiple releases look equally plausible.
+
+### Multi-credit artist and minor title variants can still oscillate
+
+Some catalogs legitimately appear under multiple artist credits and slightly different titles. Frank Zappa / The Mothers Of Invention material is a current example: ACRCloud may alternate among `Frank Zappa`, `The Mothers Of Invention`, and `Frank Zappa|The Mothers Of Invention`, while the title may also vary between forms such as `Return Of The Son Of Monster Magnet` and `The Return Of The Son Of Monster Magnet`.
+
+Known artist-credit equivalences and compound-artist matching reduce these failures, but minor title variants can still cause metadata oscillation. The project intentionally does not remove leading words such as `The` from all track titles globally because that would be broader than the evidence currently supports.
 
 ### Occasional pygame system-font warning
 
@@ -874,6 +906,7 @@ Possible future improvements:
 - Cache Spotify metadata corrections by normalized artist/title to reduce repeated Spotify searches.
 - Add a manual override database for records ACRCloud cannot identify correctly.
 - Further improve release-selection heuristics for recordings that appear on multiple legitimate releases, especially where Spotify dates or archival releases make the canonical album ambiguous.
+- Improve canonical artist/title stabilization for recordings with legitimate multi-credit artist variants (for example Frank Zappa / The Mothers Of Invention) and minor title differences such as a leading `The`, without weakening general artist matching.
 - Add an HDMI-specific UI if moving away from the CRT.
 - Investigate Pi 5 migration for more headroom.
 - Revisit waveform/spectrum visualization only if the Sony VT-M5 repair path fails.
