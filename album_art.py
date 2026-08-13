@@ -728,6 +728,7 @@ def infer_protected_recording_keyword(acr_result, spotify_tracks):
 #   35 points - exact primary artist match
 #   15 points - Spotify album release, preferred over singles/EPs
 #   20 points - meaningful album-word overlap with the ACRCloud album
+#   20 points - previously established Spotify album continuity
 #
 # Obvious compilation albums lose points. They can still win when no better
 # full-album candidate exists, but they should not beat a plausible original
@@ -738,12 +739,15 @@ def infer_protected_recording_keyword(acr_result, spotify_tracks):
 # metadata, so Spotify should still be able to improve those cases when it has
 # a better album candidate.
 #
-# Current normal maximum score is 120 before release-type penalties. Only
-# high-confidence matches should replace ACRCloud metadata.
+# Current normal maximum score is 140 with established album continuity,
+# before release-type penalties. Only high-confidence matches
+# should replace ACRCloud metadata.
 def score_spotify_track(
     acr_result,
     spotify_track,
     protected_keyword=None,
+    preferred_album_id=None,
+    preferred_artist=None,
 ):
     score = 0
 
@@ -777,6 +781,24 @@ def score_spotify_track(
 
     if spotify_track.get("album", {}).get("album_type") == "album":
         score += 15
+
+    # Give a modest preference to an album established by multiple consecutive
+    # tracks, but only when the Spotify candidate matches both the current ACR
+    # artist and the artist that established the album context.
+    if (
+        preferred_album_id
+        and preferred_artist
+        and spotify_track.get("album", {}).get("id") == preferred_album_id
+        and spotify_artist_matches(
+            acr_result.get("artist", ""),
+            spotify_track.get("artists", []),
+        )
+        and spotify_artist_matches(
+            preferred_artist,
+            spotify_track.get("artists", []),
+        )
+    ):
+        score += 20
 
     acr_album = acr_result.get("album", "")
     spotify_album_name = spotify_track.get("album", {}).get("name", "")
@@ -821,7 +843,11 @@ def score_spotify_track(
 # Returns:
 #   Spotify track object
 #   or None if no trustworthy match is found.
-def find_best_spotify_metadata_match(acr_result):
+def find_best_spotify_metadata_match(
+    acr_result,
+    preferred_album_id=None,
+    preferred_artist=None,
+):
     artist = acr_result.get("artist", "")
 
     title = clean_metadata_title_for_display(acr_result.get("title", ""))
@@ -897,7 +923,7 @@ def find_best_spotify_metadata_match(acr_result):
         #    f"{track.get('name', '')} | "
         #    f"{track.get('album', {}).get('name', '')} | "
         #    f"{track.get('album', {}).get('album_type', '')} | "
-        #    f"score={score_spotify_track(acr_result, track, protected_keyword)}"
+        #    f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
         # )
         if not spotify_artist_matches(
             acr_result.get("artist", ""),
@@ -924,7 +950,13 @@ def find_best_spotify_metadata_match(acr_result):
             )
             continue
 
-        score = score_spotify_track(acr_result, track, protected_keyword)
+        score = score_spotify_track(
+            acr_result,
+            track,
+            protected_keyword,
+            preferred_album_id,
+            preferred_artist,
+        )
 
         if score >= 85:
             album = track.get("album", {})
@@ -973,7 +1005,11 @@ def find_best_spotify_metadata_match(acr_result):
 # continue to work normally.
 
 
-def correct_metadata_with_spotify(acr_result):
+def correct_metadata_with_spotify(
+    acr_result,
+    preferred_album_id=None,
+    preferred_artist=None,
+):
     if not acr_result:
         return acr_result
 
@@ -998,8 +1034,11 @@ def correct_metadata_with_spotify(acr_result):
         )
 
     try:
-        spotify_track = find_best_spotify_metadata_match(base_result)
-
+        spotify_track = find_best_spotify_metadata_match(
+            base_result,
+            preferred_album_id,
+            preferred_artist,
+        )
         if not spotify_track:
             if protected_keyword:
                 print(

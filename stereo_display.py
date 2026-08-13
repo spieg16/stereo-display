@@ -305,6 +305,34 @@ def same_artist(a, b):
     return a.get("artist", "").strip().lower() == b.get("artist", "").strip().lower()
 
 
+# Track consecutive accepted songs from the same Spotify album so later
+# metadata corrections can use established album context without locking
+# the session to a single early recognition.
+def update_album_continuity_state(
+    result,
+    streak_artist,
+    streak_album_id,
+    streak_count,
+    new_track=True,
+):
+    if not result:
+        return None, None, 0
+
+    artist = clean_artist_for_display(result.get("artist", "")).casefold()
+    album_id = result.get("spotify_album_id")
+
+    if not artist or not album_id:
+        return None, None, 0
+
+    if artist == streak_artist and album_id == streak_album_id:
+        if new_track:
+            streak_count += 1
+
+        return streak_artist, streak_album_id, streak_count
+
+    return artist, album_id, 1
+
+
 # Detect ACRCloud results where a label, series, or catalog name is returned
 # as the artist even though the album title identifies the active artist.
 def is_catalog_series_artist_variant(current_result, new_result):
@@ -862,6 +890,10 @@ def main():
     analog_track_started_at = None
     analog_track_confirmed = False
 
+    analog_album_streak_artist = None
+    analog_album_streak_id = None
+    analog_album_streak_count = 0
+
     # Timestamp of the last Last.fm Now Playing update.
     # Used to periodically refresh Now Playing for long tracks
     # that continue playing without a track-change event.
@@ -899,6 +931,10 @@ def main():
                         last_now_playing_update = 0
                         analog_track_started_at = None
                         analog_track_confirmed = False
+
+                        analog_album_streak_artist = None
+                        analog_album_streak_id = None
+                        analog_album_streak_count = 0
 
                     else:
                         # Manual exit from analog should still scrobble the current track.
@@ -1185,6 +1221,17 @@ def main():
                             analog_result.get("artist", "")
                         )
 
+                        (
+                            analog_album_streak_artist,
+                            analog_album_streak_id,
+                            analog_album_streak_count,
+                        ) = update_album_continuity_state(
+                            analog_result,
+                            analog_album_streak_artist,
+                            analog_album_streak_id,
+                            analog_album_streak_count,
+                        )
+
                         analog_track_started_at = time.time()
                         analog_track_confirmed = False
 
@@ -1275,7 +1322,18 @@ def main():
                         # as the initial recognition.
 
                         if new_result:
-                            new_result = correct_metadata_with_spotify(new_result)
+                            preferred_album_id = None
+                            preferred_artist = None
+
+                            if analog_album_streak_count >= 2:
+                                preferred_album_id = analog_album_streak_id
+                                preferred_artist = analog_album_streak_artist
+
+                            new_result = correct_metadata_with_spotify(
+                                new_result,
+                                preferred_album_id=preferred_album_id,
+                                preferred_artist=preferred_artist,
+                            )
                             new_result = correct_catalog_series_artist_from_album(
                                 new_result
                             )
@@ -1340,6 +1398,18 @@ def main():
                                 analog_result = upgrade_same_track_metadata(
                                     analog_result,
                                     new_result,
+                                )
+
+                                (
+                                    analog_album_streak_artist,
+                                    analog_album_streak_id,
+                                    analog_album_streak_count,
+                                ) = update_album_continuity_state(
+                                    analog_result,
+                                    analog_album_streak_artist,
+                                    analog_album_streak_id,
+                                    analog_album_streak_count,
+                                    new_track=False,
                                 )
 
                                 print(
@@ -1424,6 +1494,16 @@ def main():
                             )
 
                             analog_result = new_result
+                            (
+                                analog_album_streak_artist,
+                                analog_album_streak_id,
+                                analog_album_streak_count,
+                            ) = update_album_continuity_state(
+                                analog_result,
+                                analog_album_streak_artist,
+                                analog_album_streak_id,
+                                analog_album_streak_count,
+                            )
                             analog_track_started_at = time.time()
                             analog_track_confirmed = False
                             send_lastfm_now_playing(analog_result)
@@ -1467,6 +1547,18 @@ def main():
                                 analog_result = upgrade_same_track_metadata(
                                     analog_result,
                                     new_result,
+                                )
+
+                                (
+                                    analog_album_streak_artist,
+                                    analog_album_streak_id,
+                                    analog_album_streak_count,
+                                ) = update_album_continuity_state(
+                                    analog_result,
+                                    analog_album_streak_artist,
+                                    analog_album_streak_id,
+                                    analog_album_streak_count,
+                                    new_track=False,
                                 )
 
                                 print(
