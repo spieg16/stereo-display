@@ -529,6 +529,17 @@ def normalize_artist_for_match(value):
     value = (value or "").replace("_", " ")
     value = normalize_metadata_text(value)
 
+    # Remove a trailing parenthetical artist abbreviation when it is simply
+    # an acronym of the preceding artist name, such as "(ELO)".
+    parenthetical_match = re.search(r"\s*\(([a-z0-9]+)\)\s*$", value)
+    if parenthetical_match:
+        base_artist = value[: parenthetical_match.start()].strip()
+        acronym = "".join(
+            word[0] for word in re.findall(r"[a-z0-9]+", base_artist) if word
+        )
+        if parenthetical_match.group(1) == acronym:
+            value = base_artist
+
     if value.startswith("the "):
         value = value[4:]
 
