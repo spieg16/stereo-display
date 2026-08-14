@@ -1,6 +1,6 @@
 # Stereo Display Documentation
 
-Last updated: 2026-08-11
+Last updated: 2026-08-14
 
 ## Overview
 
@@ -97,9 +97,10 @@ Current workflow:
 12. The app retrieves artwork, sends Last.fm Now Playing, and displays the track.
 13. During playback, the app records 12-second recheck samples every 30 seconds. The interval begins after recognition and artwork processing finish.
 14. Later ACRCloud matches can upgrade or preserve metadata for the same continuous recording without creating false track changes.
-15. Track changes scrobble the previous track when it is eligible.
-16. Repeated silence scrobbles the final eligible track and returns to ART Mode.
-17. The Sayo LED turns off.
+15. Consecutive accepted tracks build album-continuity state. After two tracks from the same artist resolve to the same Spotify album ID, later Spotify candidates from that album receive a modest continuity bonus.
+16. Track changes scrobble the previous track when it is eligible.
+17. Repeated silence scrobbles the final eligible track and returns to ART Mode.
+18. The Sayo LED turns off.
 
 ## Source Files
 
@@ -117,6 +118,7 @@ Responsibilities:
 - Last.fm Now Playing refreshes and scrobble calls.
 - Spotify metadata correction orchestration.
 - Same-recording stabilization and metadata upgrades.
+- Two-track Spotify album-continuity state used as a conservative metadata-scoring hint.
 - Catalog/series artist correction when an album title identifies the true artist.
 - Sayo LED integration.
 - CRT-safe layout.
@@ -402,17 +404,33 @@ Candidate scoring:
 35 points - exact primary artist match
 15 points - Spotify album_type == album
 20 points - meaningful album-word overlap with the ACRCloud album
+20 points - established Spotify album continuity
 -30 points - obvious compilation album penalty
 -30 points - single-style release penalty
 ```
 
-Only candidates scoring at least 85 are eligible.
+Only candidates scoring at least 85 are eligible. The normal maximum is 140 when established album continuity applies.
 
 Before scoring, generic ACR title metadata such as album-version, LP-version, remaster, mono-version, and stereo-version wording is removed. Punctuation differences such as commas, colons, slashes, and dashes are normalized only for matching, so titles such as `Do Right Woman, Do Right Man` and `Do Right Woman - Do Right Man` can compare equally.
 
 The album-word overlap bonus is intentionally not a hard requirement. ACRCloud can identify the correct recording with messy compilation/reissue metadata, so Spotify should still be able to improve those cases when it has a better album candidate.
 
 Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Single-style releases are also penalized so plausible original albums are preferred when available.
+
+### Established Spotify Album Continuity
+
+Spotify correction can use the album context established by preceding accepted tracks without hard-locking the session to one release. The app tracks the normalized artist, Spotify album ID, and the number of consecutive accepted tracks resolving to that same album.
+
+- The first accepted track seeds the streak at 1.
+- After two consecutive accepted tracks share the same artist and Spotify album ID, that album becomes established.
+- On later rechecks, a Spotify candidate from the established album receives a +20 score bonus only if its primary artist matches both the current ACR artist and the artist that established the streak.
+- Rechecks of the same continuous song do not increment the streak. A same-track metadata upgrade can update the stored album context without pretending another track has played.
+- When a newly accepted track resolves to a different Spotify album ID, the streak resets to 1 for the new album.
+- The continuity bonus is only a preference. Normal title/artist safeguards and the 85-point acceptance threshold still apply.
+
+This is intended to help LP playback when ACRCloud alternates among compilations, reissues, singles, and awkward catalog metadata even though several preceding tracks have already established the physical album being played. Because continuity is based on Spotify album ID rather than album-title text, it also avoids ambiguity around self-titled records and differently named deluxe editions. Spotify search still returns only the top 10 candidates, so continuity cannot favor an album candidate that Spotify did not return.
+
+The feature was added after real-world cases where sequential LP playback provided useful context that the independent per-track scorer previously ignored, including Fleetwood Mac's 1968 debut and ELO's `A New World Record`. Continuity remains deliberately modest so a bad early correction does not permanently lock later tracks to the wrong release.
 
 ### Primary Artist Safeguard
 
@@ -426,7 +444,12 @@ The Allman Brothers Band
 
 _GEORGE_HARRISON
   -> George Harrison
+
+Electric Light Orchestra (ELO)
+  -> Electric Light Orchestra
 ```
+
+A trailing parenthetical artist abbreviation is removed only when it is actually the acronym of the preceding artist name. Arbitrary parenthetical artist text is not discarded.
 
 The gate still requires the primary Spotify artist to match. It does not accept fuzzy matches or cases where the ACRCloud artist appears only as a featured or secondary Spotify artist.
 
@@ -466,11 +489,35 @@ This keeps artist matching narrow while handling real catalog-credit differences
 
 Live, unplugged, concert, and similar recordings receive additional protection during Spotify metadata correction.
 
-Rather than skipping Spotify entirely, the app performs a conservative search and accepts only candidates that represent the same protected recording type and underlying base title. Embedded ACRCloud Spotify IDs are removed before this search because they can point to a studio release even when ACRCloud identified a live recording.
+Rather than skipping Spotify entirely, the app performs a conservative search and accepts only candidates that represent the same protected recording type and underlying base title. Embedded ACRCloud Spotify IDs are removed before this search because they can point to a studio release or unrelated album even when ACRCloud identified a live recording.
 
 If ACRCloud omits the protected marker from the title, the app can infer it when Spotify returns a matching protected track on the same ACRCloud album. This allows a compilation result to establish that the recording is live, after which equivalent live candidates from original albums or archival releases can compete normally.
 
-Examples handled by this logic include:
+Protected live matching also uses performance-detail evidence when ACRCloud supplies venue, city, date, or similar identifying information. A Spotify candidate must still match the protected recording type and underlying song title, and it must share meaningful live-performance detail rather than merely being another live rendition of the same song.
+
+This prevents failures such as:
+
+```text
+He's Gone - Live at the Concertgebouw, Amsterdam, 1972
+  -> He's Gone - Live at Oakland Auditorium Arena, 1979
+
+One More Saturday Night - Live at the Lyceum, London, 1972
+  -> One More Saturday Night - Live October 1989 - April 1990
+```
+
+while still allowing compatible formatting differences such as:
+
+```text
+Jack Straw (Live at L'Olympia, Paris, May 3, 1972)
+  -> Jack Straw - Live in Paris, 1972; 2001 Remaster
+
+Cumberland Blues (Live at the Empire Pool, Wembley, England) [2022 Remaster]
+  -> Cumberland Blues - Live at Wembley Empire Pool, London, England 4/8/1972
+```
+
+The detail comparison is intentionally permissive enough to tolerate differences in venue formatting, city naming, date style, and remaster wording. It requires meaningful overlap rather than an exact title-string match.
+
+Examples already handled by the broader protected-recording logic include:
 
 ```text
 Sivad (Live)
@@ -480,18 +527,19 @@ Little Church
 Little Church - Live at the Cellar Door, Washington, DC - December 1970
 ```
 
-This protects live material from studio normalization while still allowing safer album and artwork improvements. Multiple legitimate releases of the same performance may still exist, so the selected album remains heuristic.
+This protects live material from studio normalization and from substitution with an unrelated performance while still allowing safer album and artwork improvements. Multiple legitimate releases of the same performance may still exist, so the selected album remains heuristic.
 ### Title Matching for Spotify Lookup
 
 Spotify sometimes formats the same title differently from ACRCloud. Matching normalization handles:
 
 ```text
 Album Version / LP Version metadata
-mono / stereo version metadata
+mono / stereo version metadata, including parentheses and square brackets
 remaster wording
 bracketed remaster wording
 comma, colon, slash, and dash differences
 safe descriptive aliases in trailing parentheses
+Master Take when ACRCloud uses it for the released master recording
 ```
 
 The cleaned ACR title is used for Spotify scoring, while the Spotify candidate title is left intact except for the normal narrow matching rules. This prevents generic ACR suffixes from blocking an otherwise exact Spotify match.
@@ -511,7 +559,7 @@ Mono
 Stereo
 ```
 
-The code does not globally collapse these variants into one track.
+The code does not globally collapse these variants into one track. `Master Take` is the narrow exception during Spotify matching: an explicit trailing `(Master Take)` is searched and scored by the base title so the canonical released album version can compete, while alternate takes and numbered takes remain distinct.
 ### Metadata Cleanup for Display and Last.fm
 
 After ACRCloud and any Spotify correction, the active title and artist are cleaned and stored back into the result used by the CRT display, internal track comparison, and Last.fm.
@@ -534,10 +582,10 @@ Remastered Version
 2013 Remaster
 2001 Digital Remaster
 [2019 Remaster]
-Mono
-Stereo
-Mono Version
-Stereo Version
+Mono / [Mono]
+Stereo / [Stereo]
+Mono Version / [Mono Version]
+Stereo Version / [Stereo Version]
 ```
 
 Generic bracketed remaster tags (for example `[2019 Remaster]`) are also removed while preserving meaningful version information such as `(1969 Mix)`.
@@ -640,10 +688,10 @@ Track comparison normalizes some ACR/metadata variants so these are not treated 
 - `Remaster`
 - `Remastered`
 - `Remastered Version`
-- `Mono`
-- `Stereo`
-- `Mono Version`
-- `Stereo Version`
+- `Mono` / `[Mono]`
+- `Stereo` / `[Stereo]`
+- `Mono Version` / `[Mono Version]`
+- `Stereo Version` / `[Stereo Version]`
 - Bracketed remaster tags such as `[2019 Remaster]`
 
 For internal track identity only, a trailing live-location parenthetical is treated as metadata rather than a different song. This prevents ACRCloud from creating a false track change when it alternates between:
