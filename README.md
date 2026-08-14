@@ -495,6 +495,17 @@ If ACRCloud omits the protected marker from the title, the app can infer it when
 
 Protected live matching also uses performance-detail evidence when ACRCloud supplies venue, city, date, or similar identifying information. A Spotify candidate must still match the protected recording type and underlying song title, and it must share meaningful live-performance detail rather than merely being another live rendition of the same song.
 
+The protected base-title comparison normalizes harmless punctuation differences, so titles such as:
+
+```text
+Brown-Eyed Women
+Brown Eyed Women
+```
+
+are treated as the same underlying song.
+
+Live-detail matching also ignores generic venue descriptors such as `hall`, `arena`, `stadium`, `auditorium`, `theatre`, `center`, and `university`. Those words are too common to establish that two live titles refer to the same performance. Standalone numeric tokens are also excluded so two unrelated performances are not accepted merely because they share a year.
+
 This prevents failures such as:
 
 ```text
@@ -503,6 +514,9 @@ He's Gone - Live at the Concertgebouw, Amsterdam, 1972
 
 One More Saturday Night - Live at the Lyceum, London, 1972
   -> One More Saturday Night - Live October 1989 - April 1990
+
+Brown-Eyed Women - Live at Tivoli Concert Hall, Denmark, 1972
+  -> Brown-Eyed Women - Live at Barton Hall, Cornell University, 1977
 ```
 
 while still allowing compatible formatting differences such as:
@@ -513,9 +527,12 @@ Jack Straw (Live at L'Olympia, Paris, May 3, 1972)
 
 Cumberland Blues (Live at the Empire Pool, Wembley, England) [2022 Remaster]
   -> Cumberland Blues - Live at Wembley Empire Pool, London, England 4/8/1972
+
+Brown-Eyed Women (Live at Tivoli Concert Hall, Denmark, April 14, 1972)
+  -> Brown Eyed Women - Live in Denmark, 1972; 2001 Remaster
 ```
 
-The detail comparison is intentionally permissive enough to tolerate differences in venue formatting, city naming, date style, and remaster wording. It requires meaningful overlap rather than an exact title-string match.
+The detail comparison is intentionally permissive enough to tolerate differences in venue formatting, city naming, date style, punctuation, and remaster wording, while requiring distinguishing performance detail rather than generic live terminology.
 
 Examples already handled by the broader protected-recording logic include:
 

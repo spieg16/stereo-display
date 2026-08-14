@@ -637,27 +637,61 @@ def normalize_protected_recording_base_title(value):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Treat harmless punctuation differences as equivalent in the underlying
+    # song title, such as "Brown-Eyed Women" versus "Brown Eyed Women".
+    value = re.sub(r"[-–—,:;/]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+
     return value
 
 
-# Extract meaningful venue/date words from a protected recording title so
+# Extract meaningful location/venue words from a protected recording title so
 # Spotify cannot substitute an unrelated live performance of the same song.
 def protected_recording_detail_words(value):
     value = normalize_metadata_text(value)
 
     base_title = normalize_protected_recording_base_title(value)
-    if base_title and value.startswith(base_title):
-        value = value[len(base_title) :]
+    if base_title:
+        normalized_value = re.sub(r"[-–—,:;/]+", " ", value)
+        normalized_value = re.sub(r"\s+", " ", normalized_value).strip()
 
-    value = re.sub(
-        r"\b(?:live|at|the|in|on|england|usa|united|states)\b",
-        " ",
-        value,
-        flags=re.IGNORECASE,
-    )
+        if normalized_value.startswith(base_title):
+            value = normalized_value[len(base_title) :]
+
     value = re.sub(r"[^a-z0-9]+", " ", value)
 
-    return {word for word in value.split() if len(word) >= 3 or word.isdigit()}
+    ignored_words = {
+        "live",
+        "at",
+        "the",
+        "in",
+        "on",
+        "concert",
+        "hall",
+        "theatre",
+        "theater",
+        "stadium",
+        "arena",
+        "auditorium",
+        "university",
+        "center",
+        "centre",
+        "pavilion",
+        "pavillion",
+        "remaster",
+        "remastered",
+        "version",
+        "england",
+        "usa",
+        "united",
+        "states",
+    }
+
+    return {
+        word
+        for word in value.split()
+        if len(word) >= 3 and not word.isdigit() and word not in ignored_words
+    }
 
 
 # Confirm that a Spotify result represents the same protected recording type
