@@ -640,6 +640,26 @@ def normalize_protected_recording_base_title(value):
     return value
 
 
+# Extract meaningful venue/date words from a protected recording title so
+# Spotify cannot substitute an unrelated live performance of the same song.
+def protected_recording_detail_words(value):
+    value = normalize_metadata_text(value)
+
+    base_title = normalize_protected_recording_base_title(value)
+    if base_title and value.startswith(base_title):
+        value = value[len(base_title) :]
+
+    value = re.sub(
+        r"\b(?:live|at|the|in|on|england|usa|united|states)\b",
+        " ",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+
+    return {word for word in value.split() if len(word) >= 3 or word.isdigit()}
+
+
 # Confirm that a Spotify result represents the same protected recording type
 # and underlying song as the ACRCloud result.
 def protected_spotify_track_matches(
@@ -667,14 +687,25 @@ def protected_spotify_track_matches(
     ):
         return False
 
-    acr_base_title = normalize_protected_recording_base_title(
-        acr_result.get("title", "")
-    )
-    spotify_base_title = normalize_protected_recording_base_title(
-        spotify_track.get("name", "")
-    )
+    acr_title = acr_result.get("title", "")
+    spotify_title = spotify_track.get("name", "")
 
-    return bool(acr_base_title and acr_base_title == spotify_base_title)
+    acr_base_title = normalize_protected_recording_base_title(acr_title)
+    spotify_base_title = normalize_protected_recording_base_title(spotify_title)
+
+    if not acr_base_title or acr_base_title != spotify_base_title:
+        return False
+
+    acr_detail_words = protected_recording_detail_words(acr_title)
+    spotify_detail_words = protected_recording_detail_words(spotify_title)
+
+    # If ACRCloud identifies a specific live performance by venue/date, require
+    # Spotify to share meaningful performance details rather than accepting any
+    # live rendition of the same song.
+    if acr_detail_words:
+        return bool(acr_detail_words & spotify_detail_words)
+
+    return True
 
 
 # Infer a missing protected-recording marker from a Spotify result tied to
