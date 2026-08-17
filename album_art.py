@@ -26,8 +26,10 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
     "mothers of invention": {
         "frank zappa",
     },
+    "tom petty": {
+        "tom petty and the heartbreakers",
+    },
 }
-
 
 def download_artwork_image(url):
     # Return None instead of failing when there is no usable artwork URL.
@@ -741,12 +743,9 @@ def protected_spotify_track_matches(
 
     return True
 
-
-# Infer a missing protected-recording marker from a Spotify result tied to
-# the same album ACRCloud identified.
-#
-# ACRCloud sometimes returns only the base song title even though the matched
-# compilation contains a specifically labeled live or concert recording.
+# Infer a missing protected-recording marker from Spotify results tied to the
+# same album ACRCloud identified, but only when that album does not also contain
+# an unprotected version of the same underlying song.
 def infer_protected_recording_keyword(acr_result, spotify_tracks):
     acr_album = normalize_metadata_text(acr_result.get("album", ""))
     acr_base_title = normalize_protected_recording_base_title(
@@ -755,6 +754,9 @@ def infer_protected_recording_keyword(acr_result, spotify_tracks):
 
     if not acr_album or not acr_base_title:
         return None
+
+    matching_protected_keywords = set()
+    found_unprotected_match = False
 
     for track in spotify_tracks:
         if not spotify_artist_matches(
@@ -768,23 +770,32 @@ def infer_protected_recording_keyword(acr_result, spotify_tracks):
         if normalize_metadata_text(spotify_album) != acr_album:
             continue
 
+        spotify_base_title = normalize_protected_recording_base_title(
+            track.get("name", "")
+        )
+
+        if spotify_base_title != acr_base_title:
+            continue
+
         protected_keyword = get_protected_recording_keyword(
             spotify_album,
             track.get("name", ""),
         )
 
-        if not protected_keyword:
-            continue
+        if protected_keyword:
+            matching_protected_keywords.add(protected_keyword)
+        else:
+            found_unprotected_match = True
 
-        spotify_base_title = normalize_protected_recording_base_title(
-            track.get("name", "")
-        )
+    # If the same album contains a normal studio version of the matching song,
+    # do not infer that ACRCloud meant a live or otherwise protected bonus track.
+    if found_unprotected_match:
+        return None
 
-        if spotify_base_title == acr_base_title:
-            return protected_keyword
+    if len(matching_protected_keywords) == 1:
+        return next(iter(matching_protected_keywords))
 
     return None
-
 
 # Score a Spotify search result against an ACRCloud match.
 #
@@ -983,13 +994,13 @@ def find_best_spotify_metadata_match(
     for track in tracks:
         # Temporary Spotify candidate diagnostics.
         # Uncomment when troubleshooting search/scoring behavior.
-        # print(
-        #    f"{track.get('artists', [{}])[0].get('name', '')} | "
-        #    f"{track.get('name', '')} | "
-        #    f"{track.get('album', {}).get('name', '')} | "
-        #    f"{track.get('album', {}).get('album_type', '')} | "
-        #    f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
-        # )
+        print(
+           f"{track.get('artists', [{}])[0].get('name', '')} | "
+           f"{track.get('name', '')} | "
+           f"{track.get('album', {}).get('name', '')} | "
+           f"{track.get('album', {}).get('album_type', '')} | "
+           f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
+        )
         if not spotify_artist_matches(
             acr_result.get("artist", ""),
             track.get("artists", []),
