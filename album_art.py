@@ -318,6 +318,10 @@ def normalize_metadata_title_for_match(value):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Ignore apostrophe differences during matching, since catalog sources may
+    # omit them in otherwise identical titles such as "Youre" vs "You're".
+    value = re.sub(r"[’']", "", value)
+
     # Treat punctuation differences as equivalent during Spotify title matching.
     #
     # Example:
