@@ -29,6 +29,9 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
     "tom petty": {
         "tom petty and the heartbreakers",
     },
+    "jeff beck group": {
+        "jeff beck",
+    },
 }
 
 
