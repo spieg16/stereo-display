@@ -31,6 +31,7 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
     },
 }
 
+
 def download_artwork_image(url):
     # Return None instead of failing when there is no usable artwork URL.
     if not url:
@@ -747,6 +748,7 @@ def protected_spotify_track_matches(
 
     return True
 
+
 # Infer a missing protected-recording marker from Spotify results tied to the
 # same album ACRCloud identified, but only when that album does not also contain
 # an unprotected version of the same underlying song.
@@ -800,6 +802,65 @@ def infer_protected_recording_keyword(acr_result, spotify_tracks):
         return next(iter(matching_protected_keywords))
 
     return None
+
+
+# Return True when the immediately preceding Spotify album contains a strong
+# unprotected match for the current ACR result. This is weak one-track context:
+# it may prevent album-only live inference, but it does not earn continuity
+# scoring until the album has been established by multiple consecutive tracks.
+def context_album_has_unprotected_match(
+    acr_result,
+    spotify_tracks,
+    context_album_id,
+    context_artist,
+):
+    if not context_album_id or not context_artist:
+        return False
+
+    acr_title = normalize_metadata_title_for_match(
+        clean_metadata_title_for_display(acr_result.get("title", ""))
+    )
+
+    if not acr_title:
+        return False
+
+    for track in spotify_tracks:
+        spotify_album = track.get("album", {})
+
+        if spotify_album.get("id") != context_album_id:
+            continue
+
+        if not spotify_artist_matches(
+            acr_result.get("artist", ""),
+            track.get("artists", []),
+        ):
+            continue
+
+        if not spotify_artist_matches(
+            context_artist,
+            track.get("artists", []),
+        ):
+            continue
+
+        spotify_title = normalize_metadata_title_for_match(
+            clean_metadata_title_for_display(track.get("name", ""))
+        )
+
+        if spotify_title != acr_title:
+            continue
+
+        # The context candidate must itself be an ordinary studio/unprotected
+        # track. Do not use one live recording to veto another live recording.
+        if get_protected_recording_keyword(
+            "",
+            track.get("name", ""),
+        ):
+            continue
+
+        return True
+
+    return False
+
 
 # Score a Spotify search result against an ACRCloud match.
 #
@@ -927,6 +988,8 @@ def find_best_spotify_metadata_match(
     acr_result,
     preferred_album_id=None,
     preferred_artist=None,
+    context_album_id=None,
+    context_artist=None,
 ):
     artist = acr_result.get("artist", "")
 
@@ -973,9 +1036,35 @@ def find_best_spotify_metadata_match(
     response.raise_for_status()
 
     tracks = response.json().get("tracks", {}).get("items", [])
-
     if not tracks:
         return None
+
+    # Album text alone is weaker evidence than an explicit protected marker in
+    # the ACR title. If the immediately preceding Spotify album contains a
+    # strong studio match for this song, allow normal scoring instead of forcing
+    # the result down the protected/live path.
+    title_protected_keyword = get_protected_recording_keyword(
+        "",
+        acr_result.get("title", ""),
+    )
+
+    if (
+        protected_keyword
+        and not title_protected_keyword
+        and context_album_has_unprotected_match(
+            acr_result,
+            tracks,
+            context_album_id,
+            context_artist,
+        )
+    ):
+        print(
+            "Ignoring album-only protected recording inference due to "
+            "previous-album studio match: "
+            f"{acr_result.get('artist')} - "
+            f"{acr_result.get('title')}"
+        )
+        protected_keyword = None
 
     if not protected_keyword:
         inferred_protected_keyword = infer_protected_recording_keyword(
@@ -999,11 +1088,11 @@ def find_best_spotify_metadata_match(
         # Temporary Spotify candidate diagnostics.
         # Uncomment when troubleshooting search/scoring behavior.
         print(
-           f"{track.get('artists', [{}])[0].get('name', '')} | "
-           f"{track.get('name', '')} | "
-           f"{track.get('album', {}).get('name', '')} | "
-           f"{track.get('album', {}).get('album_type', '')} | "
-           f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
+            f"{track.get('artists', [{}])[0].get('name', '')} | "
+            f"{track.get('name', '')} | "
+            f"{track.get('album', {}).get('name', '')} | "
+            f"{track.get('album', {}).get('album_type', '')} | "
+            f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
         )
         if not spotify_artist_matches(
             acr_result.get("artist", ""),
@@ -1089,6 +1178,8 @@ def correct_metadata_with_spotify(
     acr_result,
     preferred_album_id=None,
     preferred_artist=None,
+    context_album_id=None,
+    context_artist=None,
 ):
     if not acr_result:
         return acr_result
@@ -1118,6 +1209,8 @@ def correct_metadata_with_spotify(
             base_result,
             preferred_album_id,
             preferred_artist,
+            context_album_id,
+            context_artist,
         )
         if not spotify_track:
             if protected_keyword:

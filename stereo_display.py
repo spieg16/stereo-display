@@ -1320,10 +1320,19 @@ def main():
                         # Apply the same Spotify metadata cleanup to periodic
                         # rechecks so track changes use the same metadata source
                         # as the initial recognition.
-
                         if new_result:
                             preferred_album_id = None
                             preferred_artist = None
+                            context_album_id = None
+                            context_artist = None
+
+                            # A single previous track may provide weak album
+                            # context for rejecting an album-only live inference.
+                            # It does not receive the +20 continuity bonus until
+                            # two consecutive tracks establish the album.
+                            if analog_album_streak_count >= 1:
+                                context_album_id = analog_album_streak_id
+                                context_artist = analog_album_streak_artist
 
                             if analog_album_streak_count >= 2:
                                 preferred_album_id = analog_album_streak_id
@@ -1333,6 +1342,8 @@ def main():
                                 new_result,
                                 preferred_album_id=preferred_album_id,
                                 preferred_artist=preferred_artist,
+                                context_album_id=context_album_id,
+                                context_artist=context_artist,
                             )
                             new_result = correct_catalog_series_artist_from_album(
                                 new_result
