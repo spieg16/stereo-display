@@ -1048,6 +1048,8 @@ def find_best_spotify_metadata_match(
         acr_result.get("title", ""),
     )
 
+    suppressed_album_only_protection = False
+
     if (
         protected_keyword
         and not title_protected_keyword
@@ -1065,8 +1067,9 @@ def find_best_spotify_metadata_match(
             f"{acr_result.get('title')}"
         )
         protected_keyword = None
+        suppressed_album_only_protection = True
 
-    if not protected_keyword:
+    if not protected_keyword and not suppressed_album_only_protection:
         inferred_protected_keyword = infer_protected_recording_keyword(
             acr_result,
             tracks,
