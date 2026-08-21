@@ -278,6 +278,15 @@ def normalize_metadata_title_for_match(value):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Treat generic album/LP version suffixes as release metadata during
+    # Spotify matching rather than as distinct recording information.
+    value = re.sub(
+        r"\s*\(\s*(?:album|lp)\s+version\s*\)\s*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # Spotify sometimes appends a descriptive alias that ACRCloud omits,
     # such as "Give Me Your Love (Love Song)". Ignore a trailing
     # parenthetical only when it does not describe a distinct recording.

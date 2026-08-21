@@ -398,8 +398,24 @@ def correct_catalog_series_artist_from_album(result):
 
     album_artist = match.group(1).strip()
 
-    # Only replace short catalog/series-style artist names.
-    if len(artist.split()) <= 3 and artist.casefold() not in album_artist.casefold():
+    # Only replace short catalog/series-style artist names. Do not replace a
+    # real artist with a shorter fragment of that same name, such as:
+    #   Jeff Beck + Best Of Beck -> Beck
+    normalized_artist_words = set(re.findall(r"[a-z0-9]+", artist.casefold()))
+    normalized_album_artist_words = set(
+        re.findall(r"[a-z0-9]+", album_artist.casefold())
+    )
+
+    album_artist_is_fragment = bool(
+        normalized_album_artist_words
+        and normalized_album_artist_words < normalized_artist_words
+    )
+
+    if (
+        len(artist.split()) <= 3
+        and artist.casefold() not in album_artist.casefold()
+        and not album_artist_is_fragment
+    ):
         print(
             "Corrected catalog-series artist from album metadata: "
             f"{artist} -> {album_artist}"
