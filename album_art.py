@@ -978,7 +978,7 @@ def score_spotify_track(
     ):
         score -= 30
 
-    if looks_like_single_release(spotify_album_name):
+    if spotify_album_type == "single" or looks_like_single_release(spotify_album_name):
         score -= 30
 
     return score
