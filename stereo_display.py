@@ -533,6 +533,17 @@ def normalize_track_title(title):
         flags=re.IGNORECASE,
     ).strip()
 
+    title = re.sub(
+        r"\s*(?:"
+        r"\(\s*steven\s+wilson\s+remix\s*\)(?:\s*\[\s*\d{4}\s*\])?"
+        r"|"
+        r"-\s*steven\s+wilson\s+remix(?:\s*;\s*\d{4})?"
+        r")\s*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
     return title
 
 
@@ -720,6 +731,17 @@ def clean_lastfm_title(title):
     #   Rusty Cage - Remastered 2021
     title = re.sub(
         r"\s*-\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    title = re.sub(
+        r"\s*(?:"
+        r"\(\s*steven\s+wilson\s+remix\s*\)(?:\s*\[\s*\d{4}\s*\])?"
+        r"|"
+        r"-\s*steven\s+wilson\s+remix(?:\s*;\s*\d{4})?"
+        r")\s*$",
         "",
         title,
         flags=re.IGNORECASE,
