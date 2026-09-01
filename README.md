@@ -1,6 +1,8 @@
 # Stereo Display Documentation
 
-Last updated: 2026-08-14
+Last updated: 2026-09-01
+
+Documentation scope: behavior is current through repository commit `cbb3edba8a3619eef50f5d9c2c97bf63d4b2ec1b` (`Keep Spotify metadata candidate diagnostics in logs`).
 
 ## Overview
 
@@ -119,7 +121,8 @@ Responsibilities:
 - Spotify metadata correction orchestration.
 - Same-recording stabilization and metadata upgrades.
 - Two-track Spotify album-continuity state used as a conservative metadata-scoring hint.
-- Catalog/series artist correction when an album title identifies the true artist.
+- One-track previous-album context used only to veto weak album-only protected-recording inference.
+- Catalog/series artist correction when an album title identifies the true artist, with guards against replacing a real artist with a shorter name fragment.
 - Sayo LED integration.
 - CRT-safe layout.
 
@@ -192,9 +195,10 @@ Responsibilities:
 - Caches the Spotify token in memory.
 - Uses Spotify album IDs when available.
 - Corrects ACRCloud metadata with a conservative Spotify lookup.
+- Logs the Spotify candidate set and score for each metadata-correction search.
 - Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
-- Infers missing protected-recording metadata from matching Spotify compilation results.
-- Normalizes generic ACR title suffixes and punctuation for Spotify candidate scoring.
+- Infers missing protected-recording metadata conservatively, including safeguards for deluxe albums and weak previous-album context.
+- Normalizes generic ACR title suffixes, punctuation, and apostrophe differences for Spotify candidate scoring.
 - Supports narrowly defined artist-credit equivalences for known catalog-credit differences.
 - Splits compound ACR artist credits joined with `|` and checks each component independently during Spotify matching.
 - Falls back to iTunes artwork search when Spotify artwork is unavailable.
@@ -406,16 +410,27 @@ Candidate scoring:
 20 points - meaningful album-word overlap with the ACRCloud album
 20 points - established Spotify album continuity
 -30 points - obvious compilation album penalty
--30 points - single-style release penalty
+-30 points - Spotify single / single-style release penalty
 ```
 
 Only candidates scoring at least 85 are eligible. The normal maximum is 140 when established album continuity applies.
 
-Before scoring, generic ACR title metadata such as album-version, LP-version, remaster, mono-version, and stereo-version wording is removed. Punctuation differences such as commas, colons, slashes, and dashes are normalized only for matching, so titles such as `Do Right Woman, Do Right Man` and `Do Right Woman - Do Right Man` can compare equally.
+Before scoring, generic ACR title metadata such as album-version, LP-version, remaster, mono-version, and stereo-version wording is removed. Punctuation differences such as commas, colons, slashes, and dashes are normalized only for matching, and apostrophes are ignored for matching so otherwise identical titles such as `Youre` and `You're` compare equally. These changes affect matching only, not displayed metadata.
 
 The album-word overlap bonus is intentionally not a hard requirement. ACRCloud can identify the correct recording with messy compilation/reissue metadata, so Spotify should still be able to improve those cases when it has a better album candidate.
 
-Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Single-style releases are also penalized so plausible original albums are preferred when available.
+Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Spotify results whose structured `album_type` is `single` are penalized by 30 points, as are releases whose names independently look single-style. EPs are not given this blanket penalty. This helps a plausible original album beat later standalone-single packaging when both contain the same recording.
+
+Spotify candidate diagnostics are intentionally kept in the runtime log. Each search prints a header identifying the ACR artist/title followed by every returned Spotify candidate with artist, track title, album, Spotify album type, and calculated score. Rejected artist/protected-recording candidates are then logged by the normal validation path. This makes release-selection behavior inspectable without temporarily editing the code.
+
+Example:
+
+```text
+Spotify metadata candidates for Chicago - Wake up sunshine:
+  Chicago | Wake up Sunshine - 2002 Remaster | Chicago II | album | score=100
+  Chicago | Wake Up Sunshine | Summer In Chicago | single | score=75
+```
+
 
 ### Established Spotify Album Continuity
 
@@ -427,6 +442,22 @@ Spotify correction can use the album context established by preceding accepted t
 - Rechecks of the same continuous song do not increment the streak. A same-track metadata upgrade can update the stored album context without pretending another track has played.
 - When a newly accepted track resolves to a different Spotify album ID, the streak resets to 1 for the new album.
 - The continuity bonus is only a preference. Normal title/artist safeguards and the 85-point acceptance threshold still apply.
+
+A separate **weak one-track context** exists for protected-recording inference. After only one accepted track has supplied a Spotify album ID, that album does **not** receive the +20 scoring bonus. However, if the next ACR result is marked protected only because of its album name (for example an album name containing `Live`) while the ACR title itself has no protected marker, a strong unprotected same-title candidate from the immediately preceding Spotify album can veto that album-only protected inference.
+
+This is intentionally asymmetric:
+
+```text
+ACR title explicitly says Live
+  -> protected status remains authoritative
+
+ACR title is plain, but ACR album alone implies Live
+previous Spotify album contains a strong studio match
+  -> album-only protected inference may be suppressed
+```
+
+Once that weak veto fires, the code preserves the suppression and does not immediately re-infer the same protected status from the Spotify result set. Two consecutive accepted tracks are still required before the normal +20 album-continuity scoring bonus becomes active.
+
 
 This is intended to help LP playback when ACRCloud alternates among compilations, reissues, singles, and awkward catalog metadata even though several preceding tracks have already established the physical album being played. Because continuity is based on Spotify album ID rather than album-title text, it also avoids ambiguity around self-titled records and differently named deluxe editions. Spotify search still returns only the top 10 candidates, so continuity cannot favor an album candidate that Spotify did not return.
 
@@ -466,14 +497,18 @@ If Spotify cannot find a trustworthy match, the original ACRCloud result is retu
 
 The primary-artist safeguard remains intentionally strict, but a small explicit equivalence map is used for known, tested catalog-credit differences that would otherwise reject the correct Spotify candidate.
 
-Current behavior includes bidirectional matching between:
+Current explicit equivalences are intentionally directional where appropriate:
 
 ```text
-Frank Zappa
-The Mothers Of Invention
+Bidirectional:
+Frank Zappa <-> The Mothers Of Invention
+
+One-way ACR -> Spotify:
+Tom Petty -> Tom Petty and the Heartbreakers
+Jeff Beck Group -> Jeff Beck
 ```
 
-This is a matching rule only. It does not globally rewrite artist names. After a successful Spotify correction, the display and Last.fm use Spotify's canonical primary-artist credit.
+The one-way mappings allow known ACR catalog-credit variants to reach Spotify's canonical credit without making the reverse assumption for all solo-artist material. These are matching rules only; they do not globally rewrite artist names. After a successful Spotify correction, the display and Last.fm use Spotify's canonical primary-artist credit.
 
 ACRCloud can also return multiple artist credits joined with a pipe, for example:
 
@@ -492,6 +527,9 @@ Live, unplugged, concert, and similar recordings receive additional protection d
 Rather than skipping Spotify entirely, the app performs a conservative search and accepts only candidates that represent the same protected recording type and underlying base title. Embedded ACRCloud Spotify IDs are removed before this search because they can point to a studio release or unrelated album even when ACRCloud identified a live recording.
 
 If ACRCloud omits the protected marker from the title, the app can infer it when Spotify returns a matching protected track on the same ACRCloud album. This allows a compilation result to establish that the recording is live, after which equivalent live candidates from original albums or archival releases can compete normally.
+
+Protected inference is deliberately conservative on deluxe/reissue albums. If the same ACR album contains both an unprotected same-title track and a live/protected bonus version of that song, the presence of the bonus track is not enough to infer that ACR meant the live version. This prevents a normal studio track on a deluxe album from being forced into the live-matching path simply because the deluxe edition also contains a live bonus track.
+
 
 Protected live matching also uses performance-detail evidence when ACRCloud supplies venue, city, date, or similar identifying information. A Spotify candidate must still match the protected recording type and underlying song title, and it must share meaningful live-performance detail rather than merely being another live rendition of the same song.
 
@@ -554,12 +592,15 @@ Album Version / LP Version metadata
 mono / stereo version metadata, including parentheses and square brackets
 remaster wording
 bracketed remaster wording
-comma, colon, slash, and dash differences
+comma, colon, slash, dash, and apostrophe differences
 safe descriptive aliases in trailing parentheses
 Master Take when ACRCloud uses it for the released master recording
 ```
 
 The cleaned ACR title is used for Spotify scoring, while the Spotify candidate title is left intact except for the normal narrow matching rules. This prevents generic ACR suffixes from blocking an otherwise exact Spotify match.
+
+`(Album Version)` and `(LP Version)` are treated as generic release metadata during Spotify matching, not as meaningful recording distinctions. Apostrophes are also ignored only during matching. For example, `Tell Me (Youre Coming Back)` can compare with `Tell Me (You're Coming Back)` without changing the displayed spelling.
+
 
 Meaningful recording variants remain protected, including:
 
@@ -740,6 +781,16 @@ Album: The Very Best Of John Coltrane
 
 When a compilation-style album title explicitly identifies the actual artist, the app can replace the short catalog/series artist with the artist named in the album. This correction is applied to both initial identifications and later rechecks.
 
+The extracted album artist is also checked against the existing artist as normalized words. A proper subset is treated as a name fragment and is not allowed to replace the existing artist. For example:
+
+```text
+Artist: Jeff Beck
+Album: Best Of Beck
+```
+
+does **not** become `Beck`.
+
+
 A separate recheck guard also preserves an established artist when a later same-title result supplies a different catalog-style artist but its album still names the established artist.
 
 A separate protection exists for different-artist changes.
@@ -860,10 +911,13 @@ Mode changed to: analog
 Sample RMS: 2126
 Audio detected. Waiting before identification...
 ACR Match: Sonic Youth - Teen Age Riot (Album Version) (album=Daydream Nation (Deluxe Edition), score=100)
+Spotify metadata candidates for Sonic Youth - Teen Age Riot (Album Version):
+  Sonic Youth | Teen Age Riot | Daydream Nation | album | score=100
 Now Playing: Sonic Youth - Teen Age Riot (Daydream Nation)
 Last.fm Now Playing: Sonic Youth - Teen Age Riot
 Confirmed analog track: Sonic Youth - Teen Age Riot
 Inferred protected recording from matching Spotify album: Miles Davis - Little Church (live)
+Ignoring album-only protected recording inference due to previous-album studio match: Jeff Beck - Let Me Love You
 Upgraded metadata for same analog track: The Who - Who Are You (Who Are You)
 Corrected catalog-series artist from album metadata: Atlantic 60th -> John Coltrane
 Spotify metadata correction: Frank Zappa - Go Cry On Somebody Else's Shoulder (...) -> The Mothers Of Invention - Go Cry On Somebody Else's Shoulder (Spotify album=Freak Out!, ...)
@@ -903,6 +957,9 @@ For a narrow class of same-track live recordings, the application can also upgra
 ### Compilation and release selection remain heuristic
 
 The code penalizes obvious compilations and rewards album-word overlap, but it can still choose an undesired release when Spotify search results are incomplete, ACRCloud album metadata is wrong, or multiple releases look equally plausible.
+
+Spotify track search is limited to the returned candidate set, currently the top 10 results. A correct album version cannot receive continuity or scoring preference if Spotify did not return that track at all. Likewise, materially different catalog titles such as `The Red Rooster` versus `Little Red Rooster` are intentionally not globally collapsed without stronger evidence.
+
 
 ### Multi-credit artist and minor title variants can still oscillate
 
