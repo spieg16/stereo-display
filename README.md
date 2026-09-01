@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-01
 
-Documentation scope: behavior is current through repository commit `cbb3edba8a3619eef50f5d9c2c97bf63d4b2ec1b` (`Keep Spotify metadata candidate diagnostics in logs`).
+Documentation scope: repository behavior is current through commit `cbb3edba8a3619eef50f5d9c2c97bf63d4b2ec1b` (`Keep Spotify metadata candidate diagnostics in logs`), plus the latest local Steven Wilson remix-title cleanup described below.
 
 ## Overview
 
@@ -120,6 +120,7 @@ Responsibilities:
 - Last.fm Now Playing refreshes and scrobble calls.
 - Spotify metadata correction orchestration.
 - Same-recording stabilization and metadata upgrades.
+- Normalizes the narrow Steven Wilson remix-title exception for active-track identity and Last.fm/display cleanup.
 - Two-track Spotify album-continuity state used as a conservative metadata-scoring hint.
 - One-track previous-album context used only to veto weak album-only protected-recording inference.
 - Catalog/series artist correction when an album title identifies the true artist, with guards against replacing a real artist with a shorter name fragment.
@@ -199,6 +200,7 @@ Responsibilities:
 - Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
 - Infers missing protected-recording metadata conservatively, including safeguards for deluxe albums and weak previous-album context.
 - Normalizes generic ACR title suffixes, punctuation, and apostrophe differences for Spotify candidate scoring.
+- Applies the narrow Steven Wilson remix-title exception during metadata matching/display cleanup while leaving other remixes protected.
 - Supports narrowly defined artist-credit equivalences for known catalog-credit differences.
 - Splits compound ACR artist credits joined with `|` and checks each component independently during Spotify matching.
 - Falls back to iTunes artwork search when Spotify artwork is unavailable.
@@ -600,6 +602,19 @@ Master Take when ACRCloud uses it for the released master recording
 The cleaned ACR title is used for Spotify scoring, while the Spotify candidate title is left intact except for the normal narrow matching rules. This prevents generic ACR suffixes from blocking an otherwise exact Spotify match.
 
 `(Album Version)` and `(LP Version)` are treated as generic release metadata during Spotify matching, not as meaningful recording distinctions. Apostrophes are also ignored only during matching. For example, `Tell Me (Youre Coming Back)` can compare with `Tell Me (You're Coming Back)` without changing the displayed spelling.
+
+A narrow project-specific exception also treats **Steven Wilson Remix** wording as ignorable catalog metadata. This exception is deliberately specific to Steven Wilson remix labels and does **not** make arbitrary remixes equivalent to original mixes.
+
+The cleanup covers forms such as:
+
+```text
+Anxiety's Moment (Steven Wilson Remix) [2016]
+Anxiety's Moment - Steven Wilson Remix; 2016
+Anxiety's Moment
+```
+
+For this project, those forms collapse to the same base title for Spotify matching, internal track identity, display cleanup, and Last.fm submission. Other remix, mix, edit, alternate-take, live, mono/stereo, and instrumental distinctions continue to use the normal protected-recording rules unless separately normalized by an existing narrow rule.
+
 
 
 Meaningful recording variants remain protected, including:
