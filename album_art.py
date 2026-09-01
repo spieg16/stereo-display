@@ -299,6 +299,14 @@ def normalize_metadata_title_for_match(value):
         flags=re.IGNORECASE,
     ).strip()
 
+    # Treat mono/stereo mix wording as generic recording-format metadata.
+    value = re.sub(
+        r"\s*[\(\[]\s*(?:\d{4}\s+)?(?:mono|stereo)(?:\s+(?:version|mix))?\s*[\)\]]$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # Spotify sometimes appends a descriptive alias that ACRCloud omits,
     # such as "Give Me Your Love (Love Song)". Ignore a trailing
     # parenthetical only when it does not describe a distinct recording.
@@ -479,21 +487,21 @@ def clean_metadata_title_for_display(title):
     ).strip()
 
     title = re.sub(
-        r"\s*[\(\[]\s*(?:mono|stereo)(?:\s+version)?\s*[\)\]]$",
+        r"\s*[\(\[]\s*(?:\d{4}\s+)?(?:mono|stereo)(?:\s+(?:version|mix))?\s*[\)\]]$",
         "",
         title,
         flags=re.IGNORECASE,
     ).strip()
 
     # Treat Steven Wilson remix wording as catalog metadata for matching.
-    value = re.sub(
+    title = re.sub(
         r"\s*(?:"
         r"\(\s*steven\s+wilson\s+remix\s*\)(?:\s*\[\s*\d{4}\s*\])?"
         r"|"
         r"-\s*steven\s+wilson\s+remix(?:\s*;\s*\d{4})?"
         r")\s*$",
         "",
-        value,
+        title,
         flags=re.IGNORECASE,
     ).strip()
 

@@ -511,7 +511,7 @@ def normalize_track_title(title):
             title = title[: -len(suffix)].strip()
 
     title = re.sub(
-        r"\s*[\(\[]\s*(?:mono|stereo)(?:\s+version)?\s*[\)\]]$",
+        r"\s*[\(\[]\s*(?:\d{4}\s+)?(?:mono|stereo)(?:\s+(?:version|mix))?\s*[\)\]]$",
         "",
         title,
         flags=re.IGNORECASE,
@@ -707,7 +707,7 @@ def clean_lastfm_title(title):
             return title[: -len(suffix)].strip()
 
     title = re.sub(
-        r"\s*[\(\[]\s*(?:mono|stereo)(?:\s+version)?\s*[\)\]]$",
+        r"\s*[\(\[]\s*(?:\d{4}\s+)?(?:mono|stereo)(?:\s+(?:version|mix))?\s*[\)\]]$",
         "",
         title,
         flags=re.IGNORECASE,
