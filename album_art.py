@@ -1099,16 +1099,19 @@ def find_best_spotify_metadata_match(
 
     scored = []
 
+    print(
+        "Spotify metadata candidates for "
+        f"{acr_result.get('artist', '')} - {acr_result.get('title', '')}:"
+    )
     for track in tracks:
-        # Temporary Spotify candidate diagnostics.
-        # Uncomment when troubleshooting search/scoring behavior.
         print(
-            f"{track.get('artists', [{}])[0].get('name', '')} | "
+            f"  {track.get('artists', [{}])[0].get('name', '')} | "
             f"{track.get('name', '')} | "
             f"{track.get('album', {}).get('name', '')} | "
             f"{track.get('album', {}).get('album_type', '')} | "
             f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
         )
+
         if not spotify_artist_matches(
             acr_result.get("artist", ""),
             track.get("artists", []),
