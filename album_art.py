@@ -924,7 +924,8 @@ def context_album_has_unprotected_match(
 # metadata, so Spotify should still be able to improve those cases when it has
 # a better album candidate.
 #
-# Current normal maximum score is 140 with established album continuity,
+# Current normal maximum score is 170 with an exact ACR album match and
+# established album continuity,
 # before release-type penalties. Only high-confidence matches
 # should replace ACRCloud metadata.
 def score_spotify_track(
@@ -987,6 +988,16 @@ def score_spotify_track(
 
     acr_album = acr_result.get("album", "")
     spotify_album_name = spotify_track.get("album", {}).get("name", "")
+
+    # Strongly prefer the exact album identified by ACRCloud when Spotify
+    # returns that same album.
+    if (
+        acr_album
+        and spotify_album_name
+        and normalize_metadata_text(acr_album)
+        == normalize_metadata_text(spotify_album_name)
+    ):
+        score += 30
 
     acr_album_words = metadata_words(acr_album)
     spotify_album_words = metadata_words(spotify_album_name)
