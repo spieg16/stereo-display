@@ -1,6 +1,6 @@
 # Stereo Display Documentation
 
-Last updated: 2026-09-01
+Last updated: 2026-10-02
 
 Documentation scope: repository behavior is current through commit `cbb3edba8a3619eef50f5d9c2c97bf63d4b2ec1b` (`Keep Spotify metadata candidate diagnostics in logs`), plus the latest local Steven Wilson remix-title cleanup described below.
 
@@ -410,16 +410,19 @@ Candidate scoring:
 35 points - exact primary artist match
 15 points - Spotify album_type == album
 20 points - meaningful album-word overlap with the ACRCloud album
+30 points - exact normalized ACRCloud / Spotify album-name match
 20 points - established Spotify album continuity
 -30 points - obvious compilation album penalty
 -30 points - Spotify single / single-style release penalty
 ```
 
-Only candidates scoring at least 85 are eligible. The normal maximum is 140 when established album continuity applies.
+Only candidates scoring at least 85 are eligible. The normal maximum is 170 when both an exact ACRCloud album match and established album continuity apply.
 
 Before scoring, generic ACR title metadata such as album-version, LP-version, remaster, mono-version, and stereo-version wording is removed. Punctuation differences such as commas, colons, slashes, and dashes are normalized only for matching, and apostrophes are ignored for matching so otherwise identical titles such as `Youre` and `You're` compare equally. These changes affect matching only, not displayed metadata.
 
 The album-word overlap bonus is intentionally not a hard requirement. ACRCloud can identify the correct recording with messy compilation/reissue metadata, so Spotify should still be able to improve those cases when it has a better album candidate.
+
+An exact normalized ACRCloud/Spotify album-name match receives an additional **+30**. This is stronger than ordinary album-word overlap and is especially useful for protected recordings where multiple legitimate live versions of the same song can otherwise receive identical scores. For example, if ACRCloud identifies `ROXY: Tonight's the Night Live`, a Spotify candidate from that exact album is preferred over an equally strong live candidate from an unrelated release such as `Road Rock, Vol. 1 (Live)`. The bonus remains part of the normal scoring system rather than bypassing artist, title, or protected-recording safeguards.
 
 Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Spotify results whose structured `album_type` is `single` are penalized by 30 points, as are releases whose names independently look single-style. EPs are not given this blanket penalty. This helps a plausible original album beat later standalone-single packaging when both contain the same recording.
 
