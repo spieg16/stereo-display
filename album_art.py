@@ -1152,6 +1152,7 @@ def find_best_spotify_metadata_match(
             f"{track.get('name', '')} | "
             f"{track.get('album', {}).get('name', '')} | "
             f"{track.get('album', {}).get('album_type', '')} | "
+            f"release={track.get('album', {}).get('release_date', '')} | "
             f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
         )
 
