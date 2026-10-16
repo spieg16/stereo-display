@@ -1016,8 +1016,10 @@ def score_spotify_track(
 # and return the highest-confidence candidate.
 #
 # Returns:
-#   Spotify track object
-#   or None if no trustworthy match is found.
+#   (Spotify track object or None, suppressed_album_only_protection)
+#
+# The suppression flag indicates that album-only protected-recording
+# inference was overridden by evidence from the preceding Spotify album.
 def find_best_spotify_metadata_match(
     acr_result,
     preferred_album_id=None,
