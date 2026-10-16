@@ -370,37 +370,6 @@ def normalize_metadata_title_for_match(value):
     return value
 
 
-# Convert an album title into meaningful comparison words for Spotify scoring.
-#
-# This is deliberately used only as a small tie-breaker when choosing among
-# otherwise strong Spotify candidates. It helps keep a candidate from an ACR
-# album like "Never Mind The Bollocks" from losing to an unrelated release such
-# as "Spunk" simply because both tracks share the same title/artist and the
-# unrelated release has an earlier Spotify release date.
-#
-# Generic release-format words are ignored so deluxe/remaster/bonus wording
-# does not make two versions of the same album look more similar than they are.
-def metadata_words(value):
-    value = normalize_metadata_text(value)
-    value = re.sub(r"[^a-z0-9]+", " ", value)
-    return {
-        word
-        for word in value.split()
-        if len(word) > 2
-        and word
-        not in {
-            "the",
-            "and",
-            "deluxe",
-            "edition",
-            "bonus",
-            "track",
-            "remaster",
-            "remastered",
-        }
-    }
-
-
 # Detect obvious compilation-style album titles during Spotify scoring.
 #
 # Compilation candidates are not rejected outright, because sometimes the
@@ -912,22 +881,26 @@ def context_album_has_unprotected_match(
 #   50 points - exact track title match
 #   35 points - exact primary artist match
 #   15 points - Spotify album release, preferred over singles/EPs
-#   20 points - meaningful album-word overlap with the ACRCloud album
 #   20 points - previously established Spotify album continuity
+#   30 points - exact ACRCloud album match for protected recordings only
 #
-# Obvious compilation albums lose points. They can still win when no better
-# full-album candidate exists, but they should not beat a plausible original
-# album just because ACRCloud or Spotify points at a "best of" release.
+# ACRCloud album-name similarity does not contribute to ordinary studio
+# recording scores. This prevents incorrect ACRCloud compilation metadata
+# from outweighing better original-album candidates.
 #
-# Album-word overlap is intentionally only a bonus, not a hard requirement.
-# ACRCloud can identify the correct recording with messy compilation/reissue
-# metadata, so Spotify should still be able to improve those cases when it has
-# a better album candidate.
+# Protected recordings can receive an exact-album bonus to distinguish
+# different live performances or other protected versions.
 #
-# Current normal maximum score is 170 with an exact ACR album match and
-# established album continuity,
-# before release-type penalties. Only high-confidence matches
-# should replace ACRCloud metadata.
+# Spotify compilations and single-style releases receive 30-point penalties.
+# These candidates remain eligible when no better match is available.
+#
+# Maximum score before penalties:
+#   120 - ordinary studio recording with established album continuity
+#   150 - protected recording with exact album match and continuity
+#
+# Only candidates scoring at least 85 are eligible for correction.
+# Equal scores are resolved using Spotify release dates and other
+# existing tie-breakers.
 def score_spotify_track(
     acr_result,
     spotify_track,
@@ -942,11 +915,8 @@ def score_spotify_track(
     )
     spotify_title = normalize_metadata_title_for_match(spotify_track.get("name", ""))
 
-    if not protected_keyword:
-        protected_keyword = get_protected_recording_keyword(
-            acr_result.get("album", ""),
-            acr_result.get("title", ""),
-        )
+    # Use the protected-recording decision made by the caller.
+    # None can mean album-only protection was deliberately suppressed.
 
     if acr_title == spotify_title:
         score += 50
