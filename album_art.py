@@ -1053,7 +1053,7 @@ def find_best_spotify_metadata_match(
             search_title = protected_base_title
 
     if not artist or not search_title:
-        return None
+        return None, False
 
     token = get_spotify_access_token()
 
@@ -1071,7 +1071,7 @@ def find_best_spotify_metadata_match(
 
     tracks = response.json().get("tracks", {}).get("items", [])
     if not tracks:
-        return None
+        return None, False
 
     # Album text alone is weaker evidence than an explicit protected marker in
     # the ACR title. If the immediately preceding Spotify album contains a
@@ -1183,7 +1183,7 @@ def find_best_spotify_metadata_match(
             )
 
     if not scored:
-        return None
+        return None, suppressed_album_only_protection
 
     scored.sort(
         key=lambda item: (
@@ -1194,7 +1194,7 @@ def find_best_spotify_metadata_match(
         )
     )
 
-    return scored[0][3]
+    return scored[0][3], suppressed_album_only_protection
 
 
 # Replace ACRCloud metadata with cleaner Spotify metadata when
@@ -1246,13 +1246,22 @@ def correct_metadata_with_spotify(
         )
 
     try:
-        spotify_track = find_best_spotify_metadata_match(
+        (
+            spotify_track,
+            suppressed_album_only_protection,
+        ) = find_best_spotify_metadata_match(
             base_result,
             preferred_album_id,
             preferred_artist,
             context_album_id,
             context_artist,
         )
+        # Restore embedded Spotify IDs only when the previous album provided
+        # evidence that ACRCloud's album-only protection was incorrect.
+        if suppressed_album_only_protection:
+            for key in ("spotify_album_id", "spotify_track_id"):
+                if acr_result.get(key):
+                    base_result[key] = acr_result[key]
         if not spotify_track:
             if protected_keyword:
                 print(
