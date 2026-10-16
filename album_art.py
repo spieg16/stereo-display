@@ -10,6 +10,8 @@ import re
 # the main application code.
 from spotify_config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 
+_UNSET_PROTECTED_KEYWORD = object()
+
 # Cached Spotify access token. Spotify client-credentials tokens are reusable
 # for about an hour, so this avoids requesting a new token for every artwork
 # lookup.
@@ -719,9 +721,9 @@ def protected_recording_detail_words(value):
 def protected_spotify_track_matches(
     acr_result,
     spotify_track,
-    protected_keyword=None,
+    protected_keyword=_UNSET_PROTECTED_KEYWORD,
 ):
-    if not protected_keyword:
+    if protected_keyword is _UNSET_PROTECTED_KEYWORD:
         protected_keyword = get_protected_recording_keyword(
             acr_result.get("album", ""),
             acr_result.get("title", ""),
@@ -1164,8 +1166,8 @@ def find_best_spotify_metadata_match(
     scored.sort(
         key=lambda item: (
             -item[0],
-            item[1],
             item[2],
+            item[1],
             len(item[3].get("album", {}).get("name", "")),
         )
     )
