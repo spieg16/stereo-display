@@ -183,9 +183,15 @@ def fetch_artwork_from_spotify_album_search(artist, album):
 
 def fetch_artwork_from_itunes(artist, album_or_title):
     # iTunes search is the fallback artwork source when Spotify album artwork is
-    # unavailable or unusable.
-    query = f"{artist} {album_or_title}"
+    # unavailable or unusable. Only accept an exact normalized artist/album match.
+    artist = (artist or "").strip()
+    album_or_title = (album_or_title or "").strip()
 
+    if not artist or not album_or_title:
+        print("Artwork lookup: iTunes skipped, missing artist/album")
+        return None
+
+    query = f"{artist} {album_or_title}"
     print(f"Artwork lookup: iTunes query={query!r}")
 
     response = requests.get(
@@ -193,33 +199,49 @@ def fetch_artwork_from_itunes(artist, album_or_title):
         params={
             "term": query,
             "entity": "album",
-            "limit": 1,
+            "limit": 10,
         },
         timeout=10,
     )
     response.raise_for_status()
-
     results = response.json().get("results", [])
 
     if not results:
         print(f"Artwork lookup: iTunes found no results for {query!r}")
         return None
 
-    artwork_url = results[0].get("artworkUrl100")
-    collection_name = results[0].get("collectionName", "Unknown Album")
-    artist_name = results[0].get("artistName", "Unknown Artist")
+    target_artist = normalize_artist_for_match(artist)
+    target_album = normalize_metadata_text(album_or_title)
 
-    if not artwork_url:
-        print(
-            "Artwork lookup: iTunes result had no artwork URL "
-            f"for {artist_name} - {collection_name}"
-        )
-        return None
+    for result in results:
+        artist_name = result.get("artistName", "")
+        collection_name = result.get("collectionName", "")
 
-    print(f"Artwork lookup: iTunes found {artist_name} - {collection_name}")
+        if (
+            normalize_artist_for_match(artist_name) != target_artist
+            or normalize_metadata_text(collection_name) != target_album
+        ):
+            continue
 
-    # Request larger artwork than the default 100x100 thumbnail.
-    return artwork_url.replace("100x100bb", "600x600bb")
+        artwork_url = result.get("artworkUrl100")
+
+        if not artwork_url:
+            print(
+                "Artwork lookup: iTunes exact match had no artwork URL "
+                f"for {artist_name} - {collection_name}"
+            )
+            continue
+
+        print(f"Artwork lookup: iTunes exact match {artist_name} - {collection_name}")
+
+        # Request larger artwork than the default 100x100 thumbnail.
+        return artwork_url.replace("100x100bb", "600x600bb")
+
+    print(
+        f"Artwork lookup: iTunes found no exact artist/album match "
+        f"for {artist} - {album_or_title}"
+    )
+    return None
 
 
 def fetch_artwork_for_analog_result(result):
