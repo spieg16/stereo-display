@@ -1,8 +1,8 @@
 # Stereo Display Documentation
 
-Last updated: 2026-10-02
+Last updated: 2026-10-16
 
-Documentation scope: repository behavior is current through commit `cbb3edba8a3619eef50f5d9c2c97bf63d4b2ec1b` (`Keep Spotify metadata candidate diagnostics in logs`), plus the latest local Steven Wilson remix-title cleanup described below.
+Documentation scope: updated through the October 16, 2026 Spotify scoring, protected-recording, tie-break, and artwork changes, checked against the latest locally supplied `album_art.py`. The README reflects these changes; a later documentation-only comment edit may not yet be reflected in the pushed GitHub revision.
 
 ## Overview
 
@@ -196,14 +196,15 @@ Responsibilities:
 - Caches the Spotify token in memory.
 - Uses Spotify album IDs when available.
 - Corrects ACRCloud metadata with a conservative Spotify lookup.
-- Logs the Spotify candidate set and score for each metadata-correction search.
+- Logs Spotify metadata candidates with artist, title, album, release type, Spotify release date, and score.
 - Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
 - Infers missing protected-recording metadata conservatively, including safeguards for deluxe albums and weak previous-album context.
 - Normalizes generic ACR title suffixes, punctuation, and apostrophe differences for Spotify candidate scoring.
 - Applies the narrow Steven Wilson remix-title exception during metadata matching/display cleanup while leaving other remixes protected.
 - Supports narrowly defined artist-credit equivalences for known catalog-credit differences.
 - Splits compound ACR artist credits joined with `|` and checks each component independently during Spotify matching.
-- Falls back to iTunes artwork search when Spotify artwork is unavailable.
+- Searches Spotify for an exact normalized artist/album artwork match when an album ID is unavailable; continues past exact matches without images.
+- Falls back to iTunes artwork search when Spotify artwork is unavailable, accepting only exact normalized artist/album matches among up to 10 results.
 - Downloads artwork as RGB PIL images.
 
 ### `lastfm.py`
@@ -409,31 +410,30 @@ Candidate scoring:
 50 points - exact normalized track title match
 35 points - exact primary artist match
 15 points - Spotify album_type == album
-20 points - meaningful album-word overlap with the ACRCloud album
-30 points - exact normalized ACRCloud / Spotify album-name match
 20 points - established Spotify album continuity
+30 points - exact normalized ACRCloud / Spotify album-name match, protected recordings only
 -30 points - obvious compilation album penalty
 -30 points - Spotify single / single-style release penalty
 ```
 
-Only candidates scoring at least 85 are eligible. The normal maximum is 170 when both an exact ACRCloud album match and established album continuity apply.
+Only candidates scoring at least 85 are eligible. The maximum before penalties is **120 for ordinary studio recordings** with established continuity, or **150 for protected recordings** with both an exact album match and established continuity.
 
 Before scoring, generic ACR title metadata such as album-version, LP-version, remaster, mono-version, and stereo-version wording is removed. Punctuation differences such as commas, colons, slashes, and dashes are normalized only for matching, and apostrophes are ignored for matching so otherwise identical titles such as `Youre` and `You're` compare equally. These changes affect matching only, not displayed metadata.
 
-The album-word overlap bonus is intentionally not a hard requirement. ACRCloud can identify the correct recording with messy compilation/reissue metadata, so Spotify should still be able to improve those cases when it has a better album candidate.
+**Ordinary studio recordings receive no ACRCloud album-name similarity bonus.** ACRCloud can correctly identify a song while associating it with a compilation, so the former +20 album-word-overlap bonus was removed and the +30 exact-album bonus was restricted to protected recordings. For example, when ACRCloud identifies New York Dolls' `Bad Girl` as coming from `Rock 'N Roll`, the 1973 self-titled Spotify album and the 1994 compilation can tie on score; the release-date tie-break then favors the debut, provided no established album-continuity preference intervenes.
 
-An exact normalized ACRCloud/Spotify album-name match receives an additional **+30**. This is stronger than ordinary album-word overlap and is especially useful for protected recordings where multiple legitimate live versions of the same song can otherwise receive identical scores. For example, if ACRCloud identifies `ROXY: Tonight's the Night Live`, a Spotify candidate from that exact album is preferred over an equally strong live candidate from an unrelated release such as `Road Rock, Vol. 1 (Live)`. The bonus remains part of the normal scoring system rather than bypassing artist, title, or protected-recording safeguards.
+For **protected recordings** (such as live performances), an exact normalized ACRCloud/Spotify album-name match receives **+30**. This helps distinguish legitimate versions of the same live song. For example, when ACRCloud identifies Neil Young's `ROXY: Tonight's the Night Live`, the matching Spotify album can beat an otherwise equal candidate from `Road Rock, Vol. 1 (Live)`. This bonus does not bypass artist, title, or protected-recording safeguards. Partial album-word overlap is no longer scored for any recording type.
 
 Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Spotify results whose structured `album_type` is `single` are penalized by 30 points, as are releases whose names independently look single-style. EPs are not given this blanket penalty. This helps a plausible original album beat later standalone-single packaging when both contain the same recording.
 
-Spotify candidate diagnostics are intentionally kept in the runtime log. Each search prints a header identifying the ACR artist/title followed by every returned Spotify candidate with artist, track title, album, Spotify album type, and calculated score. Rejected artist/protected-recording candidates are then logged by the normal validation path. This makes release-selection behavior inspectable without temporarily editing the code.
+Spotify candidate diagnostics are intentionally kept in the runtime log. Each search prints a header identifying the ACR artist/title followed by every returned Spotify candidate with artist, track title, album, Spotify album type, Spotify release date, and calculated score. Rejected artist/protected-recording candidates are then logged by the normal validation path. This makes release-selection behavior inspectable without temporarily editing the code.
 
 Example:
 
 ```text
 Spotify metadata candidates for Chicago - Wake up sunshine:
-  Chicago | Wake up Sunshine - 2002 Remaster | Chicago II | album | score=100
-  Chicago | Wake Up Sunshine | Summer In Chicago | single | score=75
+  New York Dolls | Bad Girl | New York Dolls | album | release=1973-01-01 | score=100
+  New York Dolls | Bad Girl | Rock 'N Roll | album | release=1994-01-01 | score=100
 ```
 
 
@@ -461,7 +461,7 @@ previous Spotify album contains a strong studio match
   -> album-only protected inference may be suppressed
 ```
 
-Once that weak veto fires, the code preserves the suppression and does not immediately re-infer the same protected status from the Spotify result set. Two consecutive accepted tracks are still required before the normal +20 album-continuity scoring bonus becomes active.
+Once that weak veto fires, the code preserves the suppression and does not immediately re-infer the same protected status from the Spotify result set. The resolved protection decision is passed into scoring and protected-track validation; a sentinel distinguishes an omitted protection argument from an explicit `None` used to suppress inference. Two consecutive accepted tracks are still required before the normal +20 album-continuity scoring bonus becomes active.
 
 
 This is intended to help LP playback when ACRCloud alternates among compilations, reissues, singles, and awkward catalog metadata even though several preceding tracks have already established the physical album being played. Because continuity is based on Spotify album ID rather than album-title text, it also avoids ambiguity around self-titled records and differently named deluxe editions. Spotify search still returns only the top 10 candidates, so continuity cannot favor an album candidate that Spotify did not return.
@@ -529,7 +529,7 @@ This keeps artist matching narrow while handling real catalog-credit differences
 
 Live, unplugged, concert, and similar recordings receive additional protection during Spotify metadata correction.
 
-Rather than skipping Spotify entirely, the app performs a conservative search and accepts only candidates that represent the same protected recording type and underlying base title. Embedded ACRCloud Spotify IDs are removed before this search because they can point to a studio release or unrelated album even when ACRCloud identified a live recording.
+Rather than skipping Spotify entirely, the app performs a conservative search and accepts only candidates that represent the same protected recording type and underlying base title. Embedded ACRCloud Spotify IDs are removed before this search because they can point to a studio release or unrelated album even when ACRCloud identified a live recording. They are **not restored** merely because preceding-album context suppresses album-only protected inference: that suppression does not verify the embedded IDs. If a trustworthy Spotify candidate is found, its track and album IDs replace the originals.
 
 If ACRCloud omits the protected marker from the title, the app can infer it when Spotify returns a matching protected track on the same ACRCloud album. This allows a compilation result to establish that the recording is live, after which equivalent live candidates from original albums or archival releases can compete normally.
 
@@ -701,8 +701,8 @@ White Album
 When multiple Spotify candidates are eligible, the app sorts them by:
 
 1. Highest confidence score.
-2. Earliest Spotify release date.
-3. Full albums before singles and EPs.
+2. Full albums before singles and EPs.
+3. Earliest Spotify release date.
 4. Shorter album title when everything else is effectively equal.
 
 This often favors original albums over later compilations or remasters, but Spotify release dates can describe the recording date, archival source, or reissue metadata inconsistently. Selection remains heuristic rather than Discogs-level release matching.
@@ -711,12 +711,15 @@ This often favors original albums over later compilations or remasters, but Spot
 Analog artwork lookup uses a layered approach:
 
 1. Use a Spotify album ID when the result has one.
-2. If Spotify artwork is unavailable, fall back to iTunes artwork search.
-3. Prefer album title over track title for iTunes fallback search.
+2. If the Spotify album ID does not yield artwork, search Spotify albums using the artist and album name; accept only an exact normalized match, checking later matching results if one lacks images.
+3. If Spotify artwork is still unavailable, search up to 10 iTunes album results and accept artwork only when both artist and album match after normalization.
+4. Prefer album title over track title for the iTunes query; a track-title fallback without an album is unlikely to pass exact album validation.
 
 Spotify album IDs returned by metadata correction are preferred because they avoid ambiguous album searches and produce more reliable artwork retrieval.
 
 The album-first fallback matters for live and compilation-prone material. Track-title searches can land on the wrong release when the same song appears on a studio album, live album, compilation, or remaster.
+
+iTunes artwork is requested at 600 × 600 resolution when a validated result supplies a thumbnail URL. A failed exact-match search returns no artwork rather than accepting an unrelated cover.
 
 Artwork is cached in memory during the current app run. Cache keys use Spotify album ID when available, otherwise artist / album / title.
 
@@ -930,7 +933,7 @@ Sample RMS: 2126
 Audio detected. Waiting before identification...
 ACR Match: Sonic Youth - Teen Age Riot (Album Version) (album=Daydream Nation (Deluxe Edition), score=100)
 Spotify metadata candidates for Sonic Youth - Teen Age Riot (Album Version):
-  Sonic Youth | Teen Age Riot | Daydream Nation | album | score=100
+  Sonic Youth | Teen Age Riot | Daydream Nation | album | release=1988-10-18 | score=100
 Now Playing: Sonic Youth - Teen Age Riot (Daydream Nation)
 Last.fm Now Playing: Sonic Youth - Teen Age Riot
 Confirmed analog track: Sonic Youth - Teen Age Riot
@@ -974,7 +977,7 @@ For a narrow class of same-track live recordings, the application can also upgra
 
 ### Compilation and release selection remain heuristic
 
-The code penalizes obvious compilations and rewards album-word overlap, but it can still choose an undesired release when Spotify search results are incomplete, ACRCloud album metadata is wrong, or multiple releases look equally plausible.
+The code penalizes obvious compilations but no longer rewards ACRCloud album-word overlap. It can still choose an undesired release when Spotify search results are incomplete, ACRCloud album metadata is wrong, or multiple releases look equally plausible. Spotify often assigns digital reissue dates rather than historical first-release dates; for example, The Sonics' `Louie Louie` can rank `The Savage Young Sonics` (Spotify date 2001) ahead of `The Sonics Boom` (Spotify date 2013) when both score equally.
 
 Spotify track search is limited to the returned candidate set, currently the top 10 results. A correct album version cannot receive continuity or scoring preference if Spotify did not return that track at all. Likewise, materially different catalog titles such as `The Red Rooster` versus `Little Red Rooster` are intentionally not globally collapsed without stronger evidence.
 
@@ -1046,6 +1049,7 @@ Possible future improvements:
 - Cache Spotify metadata corrections by normalized artist/title to reduce repeated Spotify searches.
 - Add a manual override database for records ACRCloud cannot identify correctly.
 - Further improve release-selection heuristics for recordings that appear on multiple legitimate releases, especially where Spotify dates or archival releases make the canonical album ambiguous.
+- Add automated regression tests for studio-album selection (New York Dolls), competing live albums (Neil Young), album continuity, protected-recording suppression, and artwork fallback validation.
 - Improve canonical artist/title stabilization for recordings with legitimate multi-credit artist variants (for example Frank Zappa / The Mothers Of Invention) and minor title differences such as a leading `The`, without weakening general artist matching.
 - Add an HDMI-specific UI if moving away from the CRT.
 - Investigate Pi 5 migration for more headroom.
