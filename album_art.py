@@ -167,7 +167,7 @@ def fetch_artwork_from_spotify_album_search(artist, album):
                     "Artwork lookup: Spotify album search exact match had no images "
                     f"for {spotify_artist} - {spotify_album_name}"
                 )
-                return None
+                continue
 
             print(
                 "Artwork lookup: Spotify album search found exact match "
