@@ -989,30 +989,15 @@ def score_spotify_track(
     acr_album = acr_result.get("album", "")
     spotify_album_name = spotify_track.get("album", {}).get("name", "")
 
-    # Strongly prefer the exact album identified by ACRCloud when Spotify
-    # returns that same album.
+    # Prefer exact ACRCloud album matches for protected recordings.
     if (
-        acr_album
+        protected_keyword
+        and acr_album
         and spotify_album_name
         and normalize_metadata_text(acr_album)
         == normalize_metadata_text(spotify_album_name)
     ):
         score += 30
-
-    acr_album_words = metadata_words(acr_album)
-    spotify_album_words = metadata_words(spotify_album_name)
-
-    if (
-        not protected_keyword
-        and acr_album_words
-        and spotify_album_words
-        and not looks_like_compilation_album(acr_album)
-        and not looks_like_single_release(acr_album)
-    ):
-        overlap = acr_album_words & spotify_album_words
-
-        if len(overlap) >= 2:
-            score += 20
 
     spotify_album_type = spotify_track.get("album", {}).get("album_type", "")
 
