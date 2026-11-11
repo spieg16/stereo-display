@@ -34,6 +34,7 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
     "jeff beck group": {
         "jeff beck",
     },
+    "charles mingus jr.": {"charles mingus"},
 }
 
 

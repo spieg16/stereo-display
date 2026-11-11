@@ -1,8 +1,8 @@
 # Stereo Display Documentation
 
-Last updated: 2026-10-16
+Last updated: 2026-11-11
 
-Documentation scope: updated through the October 16, 2026 Spotify scoring, protected-recording, tie-break, and artwork changes, checked against the latest locally supplied `album_art.py`. The README reflects these changes; a later documentation-only comment edit may not yet be reflected in the pushed GitHub revision.
+Documentation scope: includes the October 2026 Spotify scoring, protected-recording, and artwork changes, plus the November 2026 duration-mismatch tiebreaker, corresponding diagnostic logging, and the narrowly scoped Charles Mingus Jr. artist-credit equivalence.
 
 ## Overview
 
@@ -196,7 +196,7 @@ Responsibilities:
 - Caches the Spotify token in memory.
 - Uses Spotify album IDs when available.
 - Corrects ACRCloud metadata with a conservative Spotify lookup.
-- Logs Spotify metadata candidates with artist, title, album, release type, Spotify release date, and score.
+- Logs Spotify metadata candidates with artist, title, album, release type, Spotify release date, track duration, and score, along with the ACRCloud track duration.
 - Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
 - Infers missing protected-recording metadata conservatively, including safeguards for deluxe albums and weak previous-album context.
 - Normalizes generic ACR title suffixes, punctuation, and apostrophe differences for Spotify candidate scoring.
@@ -426,14 +426,14 @@ For **protected recordings** (such as live performances), an exact normalized AC
 
 Obvious compilations can still win when no better candidate exists, but both title-pattern checks and Spotify's `album_type == compilation` metadata are used to penalize them. Spotify results whose structured `album_type` is `single` are penalized by 30 points, as are releases whose names independently look single-style. EPs are not given this blanket penalty. This helps a plausible original album beat later standalone-single packaging when both contain the same recording.
 
-Spotify candidate diagnostics are intentionally kept in the runtime log. Each search prints a header identifying the ACR artist/title followed by every returned Spotify candidate with artist, track title, album, Spotify album type, Spotify release date, and calculated score. Rejected artist/protected-recording candidates are then logged by the normal validation path. This makes release-selection behavior inspectable without temporarily editing the code.
+Spotify candidate diagnostics are intentionally kept in the runtime log. Each search prints a header identifying the ACR artist/title and ACRCloud `duration_ms`, followed by every returned Spotify candidate with artist, track title, album, Spotify album type, Spotify release date, Spotify `duration_ms`, and calculated score. Rejected artist/protected-recording candidates are then logged by the normal validation path. This makes release-selection behavior inspectable without temporarily editing the code.
 
 Example:
 
 ```text
-Spotify metadata candidates for Chicago - Wake up sunshine:
-  New York Dolls | Bad Girl | New York Dolls | album | release=1973-01-01 | score=100
-  New York Dolls | Bad Girl | Rock 'N Roll | album | release=1994-01-01 | score=100
+Spotify metadata candidates for Charles Mingus - I Can't Get Started (ACR duration_ms=220000):
+  Charles Mingus | I Can't Get Started | Mingus Plays Piano | album | release=1963 | duration_ms=221066 | score=120
+  Charles Mingus | I Can't Get Started | Mingus Three (feat. Hampton Hawes & Danny Richmond) | album | release=1957-01-01 | duration_ms=390960 | score=100
 ```
 
 
@@ -511,9 +511,10 @@ Frank Zappa <-> The Mothers Of Invention
 One-way ACR -> Spotify:
 Tom Petty -> Tom Petty and the Heartbreakers
 Jeff Beck Group -> Jeff Beck
+Charles Mingus Jr. -> Charles Mingus
 ```
 
-The one-way mappings allow known ACR catalog-credit variants to reach Spotify's canonical credit without making the reverse assumption for all solo-artist material. These are matching rules only; they do not globally rewrite artist names. After a successful Spotify correction, the display and Last.fm use Spotify's canonical primary-artist credit.
+The one-way mappings allow known ACR catalog-credit variants to reach Spotify's canonical credit without making the reverse assumption for all solo-artist material. For example, ACRCloud may report `Charles Mingus Jr.` for a recording Spotify credits to `Charles Mingus`. The explicit equivalence permits Spotify correction without relaxing the general primary-artist safeguard. These are matching rules only; they do not globally rewrite artist names. After a successful Spotify correction, the display and Last.fm use Spotify's canonical primary-artist credit. If correction fails or no trustworthy Spotify match is found, the original ACRCloud credit remains, including `Charles Mingus Jr.`.
 
 ACRCloud can also return multiple artist credits joined with a pipe, for example:
 
@@ -702,8 +703,13 @@ When multiple Spotify candidates are eligible, the app sorts them by:
 
 1. Highest confidence score.
 2. Full albums before singles and EPs.
-3. Earliest Spotify release date.
-4. Shorter album title when everything else is effectively equal.
+3. No substantial track-duration mismatch before a substantial mismatch, for ordinary unprotected recordings.
+4. Earliest Spotify release date.
+5. Shorter album title when everything else is effectively equal.
+
+The duration tiebreaker compares ACRCloud `duration_ms` with each Spotify track's `duration_ms` only when both are numeric and at least 30,000 milliseconds (30 seconds), and when no protected-recording keyword applies. A difference **greater than 15,000 milliseconds (15 seconds)** marks a candidate as mismatched; a difference of 15 seconds or less does not. Candidates with missing or invalid duration data remain neutral, rather than being automatically rejected. Duration does not add or subtract score, change the 85-point acceptance threshold, or override the higher-priority score and album-type checks. It is intentionally disabled for protected recordings, whose performance-specific safeguards remain in effect.
+
+For example, ACRCloud identified Charles Mingus's `I Can't Get Started` from `Mingus Plays Piano` with a duration of 220,000 ms; Spotify listed that recording at 221,066 ms, versus 390,960 ms for the distinct `Mingus Three` recording. Where those candidates otherwise tie on score and album type, duration favors the solo-piano recording rather than automatically choosing the earlier 1957 release. In the observed November 2026 test, however, `Mingus Plays Piano` already led 120 to 100 from established album continuity, so that log confirmed the durations but did **not** independently demonstrate the duration tiebreaker deciding the winner.
 
 This often favors original albums over later compilations or remasters, but Spotify release dates can describe the recording date, archival source, or reissue metadata inconsistently. Selection remains heuristic rather than Discogs-level release matching.
 ## Artwork Behavior
@@ -932,8 +938,8 @@ Mode changed to: analog
 Sample RMS: 2126
 Audio detected. Waiting before identification...
 ACR Match: Sonic Youth - Teen Age Riot (Album Version) (album=Daydream Nation (Deluxe Edition), score=100)
-Spotify metadata candidates for Sonic Youth - Teen Age Riot (Album Version):
-  Sonic Youth | Teen Age Riot | Daydream Nation | album | release=1988-10-18 | score=100
+Spotify metadata candidates for Sonic Youth - Teen Age Riot (Album Version) (ACR duration_ms=...):
+  Sonic Youth | Teen Age Riot | Daydream Nation | album | release=1988-10-18 | duration_ms=... | score=100
 Now Playing: Sonic Youth - Teen Age Riot (Daydream Nation)
 Last.fm Now Playing: Sonic Youth - Teen Age Riot
 Confirmed analog track: Sonic Youth - Teen Age Riot
@@ -978,6 +984,8 @@ For a narrow class of same-track live recordings, the application can also upgra
 ### Compilation and release selection remain heuristic
 
 The code penalizes obvious compilations but no longer rewards ACRCloud album-word overlap. It can still choose an undesired release when Spotify search results are incomplete, ACRCloud album metadata is wrong, or multiple releases look equally plausible. Spotify often assigns digital reissue dates rather than historical first-release dates; for example, The Sonics' `Louie Louie` can rank `The Savage Young Sonics` (Spotify date 2001) ahead of `The Sonics Boom` (Spotify date 2013) when both score equally.
+
+Duration matching can distinguish very different performances of the same composition, but it is a tiebreaker, not an audio fingerprint comparison. It cannot distinguish recordings with similar lengths and depends on ACRCloud and Spotify supplying reliable durations. The 15-second tolerance avoids penalizing small mastering differences, but materially different edits or inaccurate catalog durations can still cause an imperfect choice.
 
 Spotify track search is limited to the returned candidate set, currently the top 10 results. A correct album version cannot receive continuity or scoring preference if Spotify did not return that track at all. Likewise, materially different catalog titles such as `The Red Rooster` versus `Little Red Rooster` are intentionally not globally collapsed without stronger evidence.
 
