@@ -1122,7 +1122,8 @@ def find_best_spotify_metadata_match(
 
     print(
         "Spotify metadata candidates for "
-        f"{acr_result.get('artist', '')} - {acr_result.get('title', '')}:"
+        f"{acr_result.get('artist', '')} - {acr_result.get('title', '')} "
+        f"(ACR duration_ms={acr_result.get('duration_ms')}):"
     )
     for track in tracks:
         print(
@@ -1131,6 +1132,7 @@ def find_best_spotify_metadata_match(
             f"{track.get('album', {}).get('name', '')} | "
             f"{track.get('album', {}).get('album_type', '')} | "
             f"release={track.get('album', {}).get('release_date', '')} | "
+            f"duration_ms={track.get('duration_ms')} | "
             f"score={score_spotify_track(acr_result, track, protected_keyword, preferred_album_id, preferred_artist)}"
         )
 
@@ -1172,12 +1174,30 @@ def find_best_spotify_metadata_match(
             release_date = album.get("release_date", "9999")
             album_priority = 0 if album.get("album_type") == "album" else 1
 
+            # Use duration only to break otherwise equal studio-recording
+            # scores. A substantial mismatch is evidence that two tracks
+            # may be different performances of the same composition.
+            duration_mismatch = 0
+            acr_duration = acr_result.get("duration_ms")
+            spotify_duration = track.get("duration_ms")
+
+            if (
+                not protected_keyword
+                and isinstance(acr_duration, (int, float))
+                and isinstance(spotify_duration, (int, float))
+                and acr_duration >= 30000
+                and spotify_duration >= 30000
+                and abs(acr_duration - spotify_duration) > 15000
+            ):
+                duration_mismatch = 1
+
             scored.append(
                 (
                     score,
                     release_date,
                     album_priority,
                     track,
+                    duration_mismatch,
                 )
             )
 
@@ -1188,6 +1208,7 @@ def find_best_spotify_metadata_match(
         key=lambda item: (
             -item[0],
             item[2],
+            item[4],
             item[1],
             len(item[3].get("album", {}).get("name", "")),
         )
