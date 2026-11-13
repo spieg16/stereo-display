@@ -218,7 +218,7 @@ def draw_corner_status(screen, message, safe_x, safe_y, safe_w, safe_h):
 # recheck captures.
 def record_sample(seconds=12, log=True):
     if log:
-        print("Recording sample...")
+        print("\nRecording sample...")
 
     subprocess.run(
         [
