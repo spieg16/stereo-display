@@ -35,6 +35,7 @@ SPOTIFY_ARTIST_EQUIVALENTS = {
         "jeff beck",
     },
     "charles mingus jr.": {"charles mingus"},
+    "the black president": {"fela kuti"},
 }
 
 
