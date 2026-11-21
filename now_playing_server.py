@@ -1,5 +1,6 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DIRECTORY = Path(__file__).resolve().parent
 PORT = 8765
@@ -18,7 +19,7 @@ class NowPlayingHandler(BaseHTTPRequestHandler):
         self.serve_file(include_body=False)
 
     def serve_file(self, include_body):
-        entry = ALLOWED_FILES.get(self.path)
+        entry = ALLOWED_FILES.get(urlsplit(self.path).path)
 
         if entry is None:
             self.send_error(404)
