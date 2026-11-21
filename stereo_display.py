@@ -25,6 +25,8 @@ from lastfm import update_now_playing, scrobble
 import re
 from difflib import SequenceMatcher
 
+from listening_history import record_play
+
 # Local IP address for the Bluesound/BluOS player.
 NODE_IP = "192.168.4.40"  # Change for your BluOS player
 BASE = f"http://{NODE_IP}:11000"
@@ -823,6 +825,41 @@ def is_track_scrobble_eligible(result, track_started_at, track_confirmed):
     )
 
 
+def log_eligible_analog_track(
+    result,
+    last_logged_track,
+    track_started_at=None,
+    track_confirmed=False,
+):
+    track_key = get_track_key(result)
+
+    if not result or not track_key:
+        return last_logged_track
+
+    if track_key == last_logged_track:
+        return last_logged_track
+
+    if not is_track_scrobble_eligible(result, track_started_at, track_confirmed):
+        return last_logged_track
+
+    try:
+        row_id = record_play(
+            result,
+            source="analog",
+            started_at=track_started_at,
+        )
+        if row_id is not None:
+            print(
+                f"Local history: {result.get('artist')} - "
+                f"{result.get('title')} (id={row_id})"
+            )
+            return track_key
+    except Exception as e:
+        print(f"Local history write failed: {e}")
+
+    return last_logged_track
+
+
 # Scrobble once per normalized artist/title within an analog session.
 def scrobble_lastfm_track(
     result,
@@ -923,6 +960,7 @@ def main():
     last_analog_check = 0
     analog_silence_count = 0
     last_scrobbled_track = None
+    last_logged_track = None
     analog_active = False
     next_initial_recognition_time = 0
     analog_track_started_at = None
@@ -965,6 +1003,7 @@ def main():
                         analog_result = None
                         analog_art_image = None
                         last_scrobbled_track = None
+                        last_logged_track = None
                         next_initial_recognition_time = 0
                         last_now_playing_update = 0
                         analog_track_started_at = None
@@ -976,6 +1015,13 @@ def main():
 
                     else:
                         # Manual exit from analog should still scrobble the current track.
+                        last_logged_track = log_eligible_analog_track(
+                            analog_result,
+                            last_logged_track,
+                            analog_track_started_at,
+                            analog_track_confirmed,
+                        )
+
                         last_scrobbled_track = scrobble_lastfm_track(
                             analog_result,
                             last_scrobbled_track,
@@ -1328,7 +1374,14 @@ def main():
                             print(f"Silence count: {analog_silence_count}")
 
                             if analog_silence_count >= SILENCE_CHECKS_BEFORE_EXIT:
-                                # End of side: scrobble the final track before returning to ART mode.
+                                # End of side: record the final eligible track.
+                                last_logged_track = log_eligible_analog_track(
+                                    analog_result,
+                                    last_logged_track,
+                                    analog_track_started_at,
+                                    analog_track_confirmed,
+                                )
+
                                 last_scrobbled_track = scrobble_lastfm_track(
                                     analog_result,
                                     last_scrobbled_track,
@@ -1534,6 +1587,12 @@ def main():
                                     f"(score={new_result.get('score')})"
                                 )
                                 continue
+                            last_logged_track = log_eligible_analog_track(
+                                analog_result,
+                                last_logged_track,
+                                analog_track_started_at,
+                                analog_track_confirmed,
+                            )
 
                             last_scrobbled_track = scrobble_lastfm_track(
                                 analog_result,
