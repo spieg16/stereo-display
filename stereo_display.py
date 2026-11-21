@@ -26,6 +26,7 @@ import re
 from difflib import SequenceMatcher
 
 from listening_history import record_play, latest_bluos_play
+from now_playing_state import publish_now_playing
 
 # Local IP address for the Bluesound/BluOS player.
 NODE_IP = "192.168.4.40"  # Change for your BluOS player
@@ -759,6 +760,43 @@ def clean_lastfm_title(title):
     return title
 
 
+# Clean only the BluOS title published to the Tidbyt. Preserve mono/stereo,
+# live, alternate take, and remix details; leave BluOS history/raw data intact.
+def clean_bluos_title_for_tidbyt(title):
+    title = (title or "").strip()
+
+    # Combined edition labels: "(Mono; 2008 Remaster)" -> "(Mono)".
+    title = re.sub(
+        r"\(\s*(mono|stereo)\s*[;/,]\s*"
+        r"(?:\d{4}\s+)?(?:digital\s+)?remaster(?:ed)?"
+        r"(?:\s+\d{4})?(?:\s+version)?\s*\)$",
+        lambda match: f"({match.group(1)})",
+        title,
+        flags=re.IGNORECASE,
+    )
+
+    # Only discard generic, trailing release information. A meaningful mix,
+    # live performance, or take name is not a remaster label.
+    while True:
+        cleaned = re.sub(
+            r"\s*(?:"
+            r"[\(\[]\s*(?:\d{4}\s+)?(?:digital\s+)?"
+            r"remaster(?:ed)?(?:\s+\d{4})?(?:\s+version)?\s*[\)\]]"
+            r"|[-–]\s*(?:\d{4}\s+)?(?:digital\s+)?"
+            r"remaster(?:ed)?(?:\s+\d{4})?(?:\s+version)?"
+            r"|[\(\[]\s*(?:album|lp)\s+version\s*[\)\]]"
+            r"|[-–]\s*(?:album|lp)\s+version"
+            r")\s*$",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        ).strip()
+        if cleaned == title:
+            title = re.sub(r"\s+", " ", title).strip()
+            return title
+        title = cleaned
+
+
 # The stable identity of a track for comparison and scrobble dedupe.
 def get_track_key(result):
     if not result:
@@ -867,6 +905,21 @@ def log_eligible_analog_track(
     return last_logged_track
 
 
+# Live now-playing is independent of listening-history eligibility.
+# A write failure must not interrupt the CRT display or recognition loop.
+def update_local_now_playing(result, source, artwork=None, service=None):
+    try:
+        if publish_now_playing(result, source, artwork=artwork, service=service):
+            print(
+                f"Local now playing ({source}): "
+                f"{result.get('artist')} - {result.get('title')}"
+            )
+            return True
+    except Exception as e:
+        print(f"Local now playing update failed: {e}")
+    return False
+
+
 # Scrobble once per normalized artist/title within an analog session.
 def scrobble_lastfm_track(
     result,
@@ -959,6 +1012,8 @@ def main():
     etag = None
     last_art_key = None
     last_art_surface = None
+    last_bluos_art_image = None
+    last_published_bluos_key = None
     last_bluos_track_key = None
     bluos_startup_check_pending = True
 
@@ -1148,6 +1203,7 @@ def main():
                 if art_key != last_art_key:
                     img = fetch_art(st["image"])
 
+                    last_bluos_art_image = img
                     if img:
                         fitted = fit_image_letterbox(img, art_rect.w, art_rect.h)
                         last_art_surface = pil_to_surface(fitted)
@@ -1155,6 +1211,32 @@ def main():
                         last_art_surface = None
 
                     last_art_key = art_key
+
+                # Publish observed playback immediately, independently of
+                # SQLite history. Do not erase the latest song on pause/stop.
+                if st["state"] in ("play", "stream") and st["artist"] and st["title"]:
+                    published_key = (
+                        st["service"].casefold(),
+                        st["song"],
+                        st["artist"].casefold(),
+                        st["title"].casefold(),
+                        st["album"].casefold(),
+                        art_key,
+                    )
+                    if published_key != last_published_bluos_key:
+                        # Tidbyt-only title cleanup. Do not alter BluOS
+                        # history, the CRT artwork, artist, or album metadata.
+                        tidbyt_result = st.copy()
+                        tidbyt_result["title"] = clean_bluos_title_for_tidbyt(
+                            st["title"]
+                        )
+                        if update_local_now_playing(
+                            tidbyt_result,
+                            "bluos",
+                            artwork=last_bluos_art_image,
+                            service=st["service"],
+                        ):
+                            last_published_bluos_key = published_key
 
                 screen.fill((0, 0, 0))
 
@@ -1446,6 +1528,10 @@ def main():
                         if artwork_img:
                             analog_art_image = artwork_img
 
+                        update_local_now_playing(
+                            analog_result, "analog", artwork=analog_art_image
+                        )
+
                         # Start the recheck interval after initial recognition,
                         # metadata correction, and artwork processing finish.
                         last_analog_check = time.time()
@@ -1649,6 +1735,10 @@ def main():
                                     if artwork_img:
                                         analog_art_image = artwork_img
 
+                                update_local_now_playing(
+                                    analog_result, "analog", artwork=analog_art_image
+                                )
+
                             else:
                                 print(
                                     "Preserving analog metadata for same recording: "
@@ -1738,6 +1828,10 @@ def main():
                             if artwork_img:
                                 analog_art_image = artwork_img
 
+                            update_local_now_playing(
+                                analog_result, "analog", artwork=analog_art_image
+                            )
+
                         elif new_result and is_same_track(
                             analog_result,
                             new_result,
@@ -1803,6 +1897,10 @@ def main():
 
                                     if artwork_img:
                                         analog_art_image = artwork_img
+
+                                update_local_now_playing(
+                                    analog_result, "analog", artwork=analog_art_image
+                                )
 
                             if not analog_track_confirmed:
                                 print(
