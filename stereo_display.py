@@ -106,8 +106,8 @@ def parse_status_xml(xml_text: str) -> dict:
         "state": t("state").lower(),
         "service": t("service"),
         "title": t("title1"),
-        "artist": t("title2"),
-        "album": t("title3"),
+        "artist": t("artist") or t("title2"),
+        "album": t("album") or t("title3"),
         "song": t("song"),
         "secs": t("secs"),
     }
