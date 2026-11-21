@@ -25,7 +25,7 @@ from lastfm import update_now_playing, scrobble
 import re
 from difflib import SequenceMatcher
 
-from listening_history import record_play
+from listening_history import record_play, latest_bluos_play
 
 # Local IP address for the Bluesound/BluOS player.
 NODE_IP = "192.168.4.40"  # Change for your BluOS player
@@ -102,6 +102,13 @@ def parse_status_xml(xml_text: str) -> dict:
     return {
         "etag": (root.attrib.get("etag") or "").strip(),
         "image": t("image"),
+        "state": t("state").lower(),
+        "service": t("service"),
+        "title": t("title1"),
+        "artist": t("title2"),
+        "album": t("title3"),
+        "song": t("song"),
+        "secs": t("secs"),
     }
 
 
@@ -952,6 +959,8 @@ def main():
     etag = None
     last_art_key = None
     last_art_surface = None
+    last_bluos_track_key = None
+    bluos_startup_check_pending = True
 
     # Analog-mode state.
     analog_result = None
@@ -1043,6 +1052,96 @@ def main():
             if current_mode == MODE_ART:
                 st = get_status(etag, timeout_s=1)
                 etag = st["etag"] or etag
+
+                # Record only actual BluOS playback, not the last selected
+                # paused/stopped song. Preserve the key across pauses and mode
+                # switches so polling does not duplicate a play.
+                if st["state"] in ("play", "stream") and st["artist"] and st["title"]:
+                    bl_os_key = (
+                        st["service"].casefold(),
+                        st["song"],
+                        st["artist"].casefold(),
+                        st["title"].casefold(),
+                        st["album"].casefold(),
+                    )
+                    if bl_os_key != last_bluos_track_key:
+                        try:
+                            now = time.time()
+                            try:
+                                elapsed = float(st["secs"])
+                                if elapsed < 0:
+                                    elapsed = None
+                            except (TypeError, ValueError):
+                                elapsed = None
+
+                            # Only on the first observed playing track after
+                            # startup, compare against the persisted last play.
+                            # This avoids re-logging playback already in progress
+                            # when the Pi or application restarts.
+                            previous = (
+                                latest_bluos_play()
+                                if bluos_startup_check_pending
+                                else None
+                            )
+                            bluos_startup_check_pending = False
+                            same_previous = bool(
+                                previous
+                                and previous["artist"].casefold()
+                                == st["artist"].casefold()
+                                and previous["title"].casefold()
+                                == st["title"].casefold()
+                                and (previous["album"] or "").casefold()
+                                == st["album"].casefold()
+                                and (previous["service"] or "").casefold()
+                                == st["service"].casefold()
+                            )
+                            resumed_play = False
+                            if same_previous and elapsed is not None:
+                                # New rows store an estimated actual track start.
+                                # Allow small API/clock offsets, but don't collapse
+                                # a genuinely replayed song after a restart.
+                                estimated_start = now - elapsed
+                                saved_start = previous["started_at"]
+                                if saved_start != previous["logged_at"]:
+                                    resumed_play = (
+                                        abs(estimated_start - saved_start) <= 20
+                                    )
+                                else:
+                                    # Legacy Phase 2 rows stored log time, not
+                                    # playback start; use a cautious fallback.
+                                    resumed_play = (
+                                        now - previous["logged_at"] <= elapsed + 15
+                                        and now - previous["logged_at"] >= 0
+                                    )
+
+                            if resumed_play:
+                                last_bluos_track_key = bl_os_key
+                                print(
+                                    "Local history (BluOS): existing play after restart "
+                                    f"({st['artist']} - {st['title']}, id={previous['id']})"
+                                )
+                            else:
+                                row_id = record_play(
+                                    {
+                                        "artist": st["artist"],
+                                        "title": st["title"],
+                                        "album": st["album"],
+                                    },
+                                    source="bluos",
+                                    service=st["service"].casefold() or None,
+                                    started_at=(
+                                        now - elapsed if elapsed is not None else now
+                                    ),
+                                )
+                                if row_id is not None:
+                                    last_bluos_track_key = bl_os_key
+                                    print(
+                                        "Local history (BluOS): "
+                                        f"{st['artist']} - {st['title']} "
+                                        f"(service={st['service'] or 'unknown'}, id={row_id})"
+                                    )
+                        except Exception as e:
+                            print(f"Local BluOS history write failed: {e}")
 
                 art_key = st["image"] or ""
 
