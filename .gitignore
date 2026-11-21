@@ -20,3 +20,10 @@ __MACOSX/
 
 # Local environment
 .env
+
+# Local listening history
+listening_history.sqlite3
+
+# Tidbyt now-playing state
+now_playing.json
+now_playing_artwork.jpg
