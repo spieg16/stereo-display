@@ -63,17 +63,17 @@ MIN_ACR_SCORE_FOR_DIFFERENT_ARTIST_CHANGE = 95
 # immediately, but an unconfirmed result must remain active this long before
 # it is eligible for local history. This prevents a sampled-source false match from
 # being logged when the first recheck finds the actual recording.
-MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS = 45
+MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS = 45
 
 # For short songs, allow an unconfirmed first recognition into history after
 # enough of the known ACRCloud duration has played, instead of always requiring
 # the full 45-second provisional window.
-MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE = 0.50
+MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_HISTORY = 0.50
 
 # Still require a short minimum active time so a very brief false initial match
 # does not immediately become eligible just because ACRCloud reports a short
 # duration.
-MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_SCROBBLE_SECONDS = 20
+MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_HISTORY_SECONDS = 20
 
 # Off-white text reduces CRT bloom/haloing compared with pure white.
 # Use this anywhere the display would otherwise render normal white text.
@@ -687,7 +687,7 @@ def clean_artist_for_display(artist):
 # entries. The app writes this cleaned title back into the active analog
 # result, so display text, local history, and internal track
 # comparison use the same canonical title after recognition cleanup.
-def clean_lastfm_title(title):
+def clean_analog_title(title):
     title = (title or "").strip()
 
     suffixes = [
@@ -807,30 +807,30 @@ def get_track_key(result):
 # Normal-length tracks still use the fixed provisional window. Short tracks use
 # a duration-based window so legitimate brief songs are not skipped simply
 # because they end before the next recheck can reconfirm them.
-def get_unconfirmed_scrobble_required_seconds(result):
+def get_unconfirmed_history_required_seconds(result):
     duration_ms = (result or {}).get("duration_ms")
 
     if not duration_ms:
-        return MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS
+        return MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS
 
     try:
         duration_seconds = float(duration_ms) / 1000
     except (TypeError, ValueError):
-        return MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS
+        return MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS
 
     if duration_seconds <= 0:
-        return MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS
+        return MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS
 
     return min(
-        MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS,
+        MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS,
         max(
-            MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_SCROBBLE_SECONDS,
-            duration_seconds * MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE,
+            MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_HISTORY_SECONDS,
+            duration_seconds * MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_HISTORY,
         ),
     )
 
 
-def is_track_scrobble_eligible(result, track_started_at, track_confirmed):
+def is_track_history_eligible(result, track_started_at, track_confirmed):
     # Reconfirmed tracks are eligible immediately. Only the first,
     # unconfirmed recognition in a session needs the provisional age check.
     if track_confirmed:
@@ -839,7 +839,7 @@ def is_track_scrobble_eligible(result, track_started_at, track_confirmed):
     if not track_started_at:
         return False
 
-    return time.time() - track_started_at >= get_unconfirmed_scrobble_required_seconds(
+    return time.time() - track_started_at >= get_unconfirmed_history_required_seconds(
         result
     )
 
@@ -858,7 +858,7 @@ def log_eligible_analog_track(
     if track_key == last_logged_track:
         return last_logged_track
 
-    if not is_track_scrobble_eligible(result, track_started_at, track_confirmed):
+    if not is_track_history_eligible(result, track_started_at, track_confirmed):
         return last_logged_track
 
     try:
@@ -1370,7 +1370,7 @@ def main():
                         # Store the cleaned title in the active result so the CRT,
                         # internal track comparison, and local history all see the same
                         # remaster-scrubbed title.
-                        analog_result["title"] = clean_lastfm_title(
+                        analog_result["title"] = clean_analog_title(
                             analog_result.get("title", "")
                         )
 
@@ -1503,7 +1503,7 @@ def main():
                             new_result = correct_catalog_series_artist_from_album(
                                 new_result
                             )
-                            new_result["title"] = clean_lastfm_title(
+                            new_result["title"] = clean_analog_title(
                                 new_result.get("title", "")
                             )
 
