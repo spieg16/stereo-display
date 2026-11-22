@@ -159,9 +159,9 @@ SILENCE_THRESHOLD = 900
 SILENCE_CHECKS_BEFORE_EXIT = 3
 INITIAL_RECOGNITION_RETRY_SECONDS = 45
 MIN_ACR_SCORE_FOR_DIFFERENT_ARTIST_CHANGE = 95
-MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS = 45
-MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE = 0.50
-MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_SCROBBLE_SECONDS = 20
+MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS = 45
+MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_HISTORY = 0.50
+MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_HISTORY_SECONDS = 20
 ```
 
 Current recording behavior in `stereo_display.py`:
@@ -789,7 +789,7 @@ The unconfirmed age requirement is adaptive:
 required seconds = min(45, max(20, duration_seconds * 0.50))
 ```
 
-This protects against high-confidence false initial recognitions while allowing short legitimate tracks to qualify when ACRCloud provides their duration. Existing Python helper and constant names may still contain `scrobble`; they now govern local-history eligibility and have not been renamed to avoid changing tested behavior.
+This protects against high-confidence false initial recognitions while allowing short legitimate tracks to qualify when ACRCloud provides their duration. The corresponding helper functions are now named `get_unconfirmed_history_required_seconds()` and `is_track_history_eligible()`. Analog title cleanup is handled by `clean_analog_title()`.
 
 ### Analog History Deduplication
 
