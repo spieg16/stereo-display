@@ -1,6 +1,6 @@
 # Main dual-mode CRT display app.
 # ART mode shows BluOS artwork; ANALOG mode recognizes vinyl from the USB audio input,
-# displays metadata/artwork, scrobbles to Last.fm, and returns to ART after silence.
+# displays metadata/artwork, logs eligible tracks locally, and returns to ART after silence.
 
 import time
 import subprocess
@@ -19,8 +19,6 @@ from analog_recognition import recognize_sample
 
 import wave
 import numpy as np
-
-from lastfm import update_now_playing, scrobble
 
 import re
 from difflib import SequenceMatcher
@@ -46,11 +44,6 @@ MODE_ANALOG = "analog"
 # After a track is identified, re-sample this often to detect track changes or silence.
 ANALOG_RECHECK_SECONDS = 30
 
-# Last.fm's Now Playing display can expire during very long tracks.
-# Refreshing every 2 minutes keeps side-long / long jazz tracks visible
-# without affecting scrobble history.
-LASTFM_NOW_PLAYING_REFRESH_SECONDS = 120
-
 # RMS below this is treated as silence/runout/no meaningful audio.
 # This was tuned from real observations: true silence ~1-6, runout low hundreds, music 2000+.
 SILENCE_THRESHOLD = 900
@@ -68,11 +61,11 @@ MIN_ACR_SCORE_FOR_DIFFERENT_ARTIST_CHANGE = 95
 
 # The first ACR result in a session is provisional. It may be displayed
 # immediately, but an unconfirmed result must remain active this long before
-# it is eligible to scrobble. This prevents a sampled-source false match from
-# being written to Last.fm when the first recheck finds the actual recording.
+# it is eligible for local history. This prevents a sampled-source false match from
+# being logged when the first recheck finds the actual recording.
 MIN_UNCONFIRMED_TRACK_AGE_BEFORE_SCROBBLE_SECONDS = 45
 
-# For short songs, allow an unconfirmed first recognition to scrobble after
+# For short songs, allow an unconfirmed first recognition into history after
 # enough of the known ACRCloud duration has played, instead of always requiring
 # the full 45-second provisional window.
 MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_SCROBBLE = 0.50
@@ -290,7 +283,7 @@ def should_upgrade_same_track_metadata(current_result, new_result):
 
 
 # Replace only the descriptive metadata for the active recording.
-# Playback timing, confirmation state, and scrobble state are stored
+# Playback timing, confirmation state, and history state are stored
 # separately and therefore remain unchanged.
 def upgrade_same_track_metadata(current_result, new_result):
     updated_result = current_result.copy()
@@ -497,7 +490,7 @@ def is_sample_silent(sample_path="/tmp/current_sample.wav"):
         return False
 
 
-# Normalize ACR title variants for comparisons/scrobble dedupe, not for display.
+# Normalize ACR title variants for comparisons/history dedupe, not for display.
 def normalize_track_title(title):
     title = (title or "").strip().lower()
 
@@ -534,7 +527,7 @@ def normalize_track_title(title):
     # and:
     #   "Badlands"
     #
-    # Do not use this for display or Last.fm submission; live-performance
+    # Do not use this for display; live-performance
     # details are still useful there when ACR provides them.
     title = re.sub(
         r"\s*\([^)]*\blive\b[^)]*\)$",
@@ -669,18 +662,18 @@ def is_same_recording_variant(current_result, new_result):
     return SequenceMatcher(None, current_title, new_title).ratio() >= 0.94
 
 
-# Clean artist names before they are displayed, compared, or sent to Last.fm.
+# Clean artist names before display, comparison, and local history.
 #
 # ACRCloud sometimes returns catalog-style artist strings with underscores, such
 # as "_GEORGE_HARRISON". Treat underscores as spaces so the visible metadata and
-# Last.fm history use a normal artist name, without changing the stricter
+# local history use a normal artist name, without changing the stricter
 # Spotify matching rules in album_art.py.
 def clean_artist_for_display(artist):
     artist = (artist or "").replace("_", " ")
     return " ".join(artist.split()).strip()
 
 
-# Normalize track titles before they are stored, displayed, and sent to Last.fm.
+# Normalize track titles before they are stored and displayed.
 #
 # ACRCloud sometimes identifies the same recording using slightly different
 # title variants:
@@ -690,10 +683,10 @@ def clean_artist_for_display(artist):
 #   West 22nd Street Theme - Album Version
 #   Wah-Wah (2001 Digital Remaster)
 #
-# Last.fm treats those as different tracks and will create separate scrobble
-# entries. The app now writes this cleaned title back into the active analog
-# result, so display text, Last.fm Now Playing, scrobbles, and internal track
-# comparison all use the same canonical title after recognition cleanup.
+# These variants would otherwise create separate local history
+# entries. The app writes this cleaned title back into the active analog
+# result, so display text, local history, and internal track
+# comparison use the same canonical title after recognition cleanup.
 def clean_lastfm_title(title):
     title = (title or "").strip()
 
@@ -797,7 +790,7 @@ def clean_bluos_title_for_tidbyt(title):
         title = cleaned
 
 
-# The stable identity of a track for comparison and scrobble dedupe.
+# The stable identity of a track for comparison and history dedupe.
 def get_track_key(result):
     if not result:
         return None
@@ -808,27 +801,8 @@ def get_track_key(result):
     )
 
 
-# Tell Last.fm what is currently playing, but never let Last.fm errors crash the display.
-def send_lastfm_now_playing(result):
-    if not result:
-        return
-
-    lastfm_title = clean_lastfm_title(result.get("title", ""))
-
-    print(f"Last.fm Now Playing: " f"{result.get('artist')} - " f"{lastfm_title}")
-
-    try:
-        update_now_playing(
-            result.get("artist", ""),
-            lastfm_title,
-            result.get("album", ""),
-        )
-    except Exception as e:
-        print(f"Last.fm now playing failed: {e}")
-
-
 # Determine how long an unconfirmed first recognition must remain active
-# before it can be scrobbled.
+# before it is eligible for local history.
 #
 # Normal-length tracks still use the fixed provisional window. Short tracks use
 # a duration-based window so legitimate brief songs are not skipped simply
@@ -857,7 +831,7 @@ def get_unconfirmed_scrobble_required_seconds(result):
 
 
 def is_track_scrobble_eligible(result, track_started_at, track_confirmed):
-    # Reconfirmed tracks are safe to scrobble immediately. Only the first,
+    # Reconfirmed tracks are eligible immediately. Only the first,
     # unconfirmed recognition in a session needs the provisional age check.
     if track_confirmed:
         return True
@@ -918,48 +892,6 @@ def update_local_now_playing(result, source, artwork=None, service=None):
     except Exception as e:
         print(f"Local now playing update failed: {e}")
     return False
-
-
-# Scrobble once per normalized artist/title within an analog session.
-def scrobble_lastfm_track(
-    result,
-    last_scrobbled_track,
-    track_started_at=None,
-    track_confirmed=False,
-):
-    track_key = get_track_key(result)
-
-    if not result or not track_key:
-        return last_scrobbled_track
-
-    if track_key == last_scrobbled_track:
-        return last_scrobbled_track
-
-    if not is_track_scrobble_eligible(result, track_started_at, track_confirmed):
-        age = int(time.time() - track_started_at) if track_started_at else 0
-        required = int(get_unconfirmed_scrobble_required_seconds(result))
-        print(
-            "Skipping provisional Last.fm scrobble: "
-            f"{result.get('artist')} - {clean_lastfm_title(result.get('title', ''))} "
-            f"(active {age}s, needs {required}s or reconfirmation)"
-        )
-        return last_scrobbled_track
-
-    lastfm_title = clean_lastfm_title(result.get("title", ""))
-
-    try:
-        print(f"Last.fm Scrobble: " f"{result.get('artist')} - {lastfm_title}")
-
-        scrobble(
-            result.get("artist", ""),
-            lastfm_title,
-            result.get("album", ""),
-        )
-        return track_key
-
-    except Exception as e:
-        print(f"Last.fm scrobble failed: {e}")
-        return last_scrobbled_track
 
 
 # Control the Sayo key light via the sudo-safe helper script.
@@ -1023,7 +955,6 @@ def main():
     analog_art_cache = {}
     last_analog_check = 0
     analog_silence_count = 0
-    last_scrobbled_track = None
     last_logged_track = None
     analog_active = False
     next_initial_recognition_time = 0
@@ -1033,11 +964,6 @@ def main():
     analog_album_streak_artist = None
     analog_album_streak_id = None
     analog_album_streak_count = 0
-
-    # Timestamp of the last Last.fm Now Playing update.
-    # Used to periodically refresh Now Playing for long tracks
-    # that continue playing without a track-change event.
-    last_now_playing_update = 0
 
     # Start safely in ART mode and force the Sayo light off.
     current_mode = MODE_ART
@@ -1058,7 +984,7 @@ def main():
 
                     if current_mode == MODE_ART:
                         # ART mode: keep polling BluOS and redraw only when the artwork changes.
-                        # New analog session: clear stale track/art/scrobble state.
+                        # New analog session: clear stale track/art/history state.
                         current_mode = MODE_ANALOG
                         set_mode_light(True)
                         print(f"Mode changed to: {current_mode}")
@@ -1066,10 +992,8 @@ def main():
                         analog_active = False
                         analog_result = None
                         analog_art_image = None
-                        last_scrobbled_track = None
                         last_logged_track = None
                         next_initial_recognition_time = 0
-                        last_now_playing_update = 0
                         analog_track_started_at = None
                         analog_track_confirmed = False
 
@@ -1078,17 +1002,10 @@ def main():
                         analog_album_streak_count = 0
 
                     else:
-                        # Manual exit from analog should still scrobble the current track.
+                        # Manual exit from analog should still record the current eligible track.
                         last_logged_track = log_eligible_analog_track(
                             analog_result,
                             last_logged_track,
-                            analog_track_started_at,
-                            analog_track_confirmed,
-                        )
-
-                        last_scrobbled_track = scrobble_lastfm_track(
-                            analog_result,
-                            last_scrobbled_track,
                             analog_track_started_at,
                             analog_track_confirmed,
                         )
@@ -1384,31 +1301,6 @@ def main():
 
                 pygame.display.flip()
 
-                # Keep Last.fm "Now Playing" alive for long tracks.
-                #
-                # ACRCloud may return "No result" for several consecutive
-                # rechecks even while music is still playing. Refreshing
-                # based solely on successful recognitions can therefore
-                # allow the Last.fm Now Playing entry to expire.
-                #
-                # As long as we have an active, identified track, refresh
-                # the Now Playing status every few minutes regardless of
-                # recognition results.
-                if (
-                    analog_active
-                    and analog_result
-                    and time.time() - last_now_playing_update
-                    >= LASTFM_NOW_PLAYING_REFRESH_SECONDS
-                ):
-                    print(
-                        f"Last.fm Now Playing Refresh: "
-                        f"{analog_result.get('artist')} - "
-                        f"{analog_result.get('title')}"
-                    )
-
-                    send_lastfm_now_playing(analog_result)
-                    last_now_playing_update = time.time()
-
                 if not analog_active:
                     # Before a track is identified, use short samples only to check for audio.
                     # This keeps the mode button responsive and avoids ACRCloud calls while idle.
@@ -1476,7 +1368,7 @@ def main():
                         )
 
                         # Store the cleaned title in the active result so the CRT,
-                        # internal track comparison, and Last.fm all see the same
+                        # internal track comparison, and local history all see the same
                         # remaster-scrubbed title.
                         analog_result["title"] = clean_lastfm_title(
                             analog_result.get("title", "")
@@ -1506,12 +1398,6 @@ def main():
                             f"{analog_result['title']} "
                             f"({analog_result.get('album', 'Unknown Album')})"
                         )
-
-                        send_lastfm_now_playing(analog_result)
-
-                        # Start the Now Playing refresh timer after the
-                        # first successful identification.
-                        last_now_playing_update = time.time()
 
                         draw_center_message(
                             screen,
@@ -1563,13 +1449,6 @@ def main():
                                 last_logged_track = log_eligible_analog_track(
                                     analog_result,
                                     last_logged_track,
-                                    analog_track_started_at,
-                                    analog_track_confirmed,
-                                )
-
-                                last_scrobbled_track = scrobble_lastfm_track(
-                                    analog_result,
-                                    last_scrobbled_track,
                                     analog_track_started_at,
                                     analog_track_confirmed,
                                 )
@@ -1706,9 +1585,6 @@ def main():
                                     f"({analog_result.get('album')})"
                                 )
 
-                                send_lastfm_now_playing(analog_result)
-                                last_now_playing_update = time.time()
-
                                 artwork_changed = (
                                     analog_result.get("album") != previous_album
                                     or analog_result.get("spotify_album_id")
@@ -1755,7 +1631,7 @@ def main():
                             analog_result,
                             new_result,
                         ):
-                            # New recognized artist/title means the previous track can now be scrobbled.
+                            # A new recognized artist/title ends the previous track for local history.
                             print(
                                 f"Track Change: "
                                 f"{new_result['artist']} - "
@@ -1783,13 +1659,6 @@ def main():
                                 analog_track_confirmed,
                             )
 
-                            last_scrobbled_track = scrobble_lastfm_track(
-                                analog_result,
-                                last_scrobbled_track,
-                                analog_track_started_at,
-                                analog_track_confirmed,
-                            )
-
                             analog_result = new_result
                             (
                                 analog_album_streak_artist,
@@ -1803,11 +1672,6 @@ def main():
                             )
                             analog_track_started_at = time.time()
                             analog_track_confirmed = False
-                            send_lastfm_now_playing(analog_result)
-
-                            # Reset the Now Playing refresh timer whenever
-                            # a new track is accepted.
-                            last_now_playing_update = time.time()
 
                             draw_corner_status(
                                 screen,
@@ -1868,9 +1732,6 @@ def main():
                                     f"{analog_result.get('title')} "
                                     f"({analog_result.get('album')})"
                                 )
-
-                                send_lastfm_now_playing(analog_result)
-                                last_now_playing_update = time.time()
 
                                 artwork_changed = (
                                     analog_result.get("album") != previous_album
