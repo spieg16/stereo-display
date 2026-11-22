@@ -1,8 +1,8 @@
 # Stereo Display Documentation
 
-Last updated: 2026-11-11
+Last updated: 2026-11-21
 
-Documentation scope: includes the October 2026 Spotify scoring, protected-recording, and artwork changes, plus the November 2026 duration-mismatch tiebreaker, corresponding diagnostic logging, and the narrowly scoped Charles Mingus Jr. artist-credit equivalence.
+Documentation scope: includes the October and November 2026 Spotify scoring, protected-recording, artwork, duration-tiebreaker, and artist-credit changes; the November 2026 SQLite listening history, live now-playing snapshots, HTTP server, Tronbyt integration, and removal of Last.fm.
 
 ## Overview
 
@@ -11,9 +11,9 @@ Stereo Display is a Raspberry Pi project that provides a full-screen now-playing
 The current application has two operating modes:
 
 - **ART Mode** - displays BluOS album artwork from the BluOS local API.
-- **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, applies conservative Spotify metadata correction and stability safeguards, retrieves artwork, updates Last.fm Now Playing, scrobbles tracks, and returns to ART Mode after silence.
+- **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, applies conservative Spotify metadata correction and stability safeguards, retrieves artwork, publishes live now-playing metadata, logs eligible tracks to local SQLite history, and returns to ART Mode after silence.
 
-The app is primarily run from `stereo_display.py`.
+The CRT app is primarily run from `stereo_display.py`. A separate HTTP server publishes the same live now-playing metadata and album artwork to the Tronbyt app running on the Mac Pro. Listening history is stored locally in SQLite; Last.fm is no longer used.
 
 ## Current Hardware Setup
 
@@ -29,6 +29,7 @@ Optional but currently used in this build:
 
 - SayoDevice 1x1P macro key for mode switching.
 - Turntable, tuner, tape deck, or another analog source feeding the USB audio interface.
+- Mac Pro running the separate Tronbyt server and compatible LED display.
 
 Future display note:
 
@@ -39,11 +40,12 @@ Future display note:
 ```text
 BluOS player / Node
         |
-        |  HTTP BluOS API
+        |  HTTP BluOS /Status API
         v
-  Raspberry Pi / pygame display
+  Raspberry Pi / stereo_display.py
         |
-        +-- ART Mode: display BluOS artwork
+        +-- ART Mode: display BluOS artwork on CRT
+        +-- BluOS track history -> SQLite
         |
 Analog source
         |
@@ -55,14 +57,31 @@ USB audio interface
         |
         +-- Spotify metadata correction + artwork
         +-- iTunes artwork fallback
-        +-- Last.fm Now Playing
-        +-- Last.fm scrobbling
+        +-- ANALOG Mode: display metadata/artwork on CRT
+        +-- Eligible analog play history -> SQLite
+        |
+        v
+  now_playing_state.py
+        |
+        +-- now_playing.json
+        +-- now_playing_artwork.jpg
+        |
+        v
+  now_playing_server.py (port 8765)
+        |
+        v
+  Mac Pro / Tronbyt server
+        |
+        v
+  tronbyt/stereo_now_playing.star -> LED display
 
 SayoDevice 1x1P
         |
         +-- sends keypress "1" to toggle modes
         +-- LED follows mode via Linux NumLock LED helper
 ```
+
+Local SQLite history and live now-playing publication are independent. A track can be displayed on Tronbyt immediately, without waiting for analog provisional eligibility or a SQLite write.
 
 ## Operating Modes
 
@@ -87,7 +106,7 @@ Current workflow:
 
 1. User activates ANALOG Mode.
 2. Sayo indicator LED turns on.
-3. Manual entry resets the initial-recognition cooldown, Last.fm refresh timer, and provisional-track state.
+3. Manual entry resets the initial-recognition cooldown, provisional-track state, and analog history deduplication state.
 4. The app waits for audio using short RMS-check samples.
 5. Once audio is detected, the app waits briefly before fingerprinting.
 6. A 20-second initial sample is sent to ACRCloud.
@@ -95,13 +114,13 @@ Current workflow:
 8. If recognized, the result is passed through conservative Spotify metadata correction.
 9. Generic title metadata and punctuation differences are normalized for Spotify candidate scoring, while meaningful recording variants remain protected.
 10. Protected recordings (live, unplugged, concert, etc.) are matched only to equivalent protected recordings; Spotify compilation results may also provide evidence that ACRCloud omitted the protected marker.
-11. The active title and artist are cleaned before display, internal comparison, and Last.fm submission.
-12. The app retrieves artwork, sends Last.fm Now Playing, and displays the track.
+11. The active title and artist are cleaned before display, internal comparison, and local history.
+12. The app retrieves artwork, publishes a live now-playing snapshot, and displays the track.
 13. During playback, the app records 12-second recheck samples every 30 seconds. The interval begins after recognition and artwork processing finish.
 14. Later ACRCloud matches can upgrade or preserve metadata for the same continuous recording without creating false track changes.
 15. Consecutive accepted tracks build album-continuity state. After two tracks from the same artist resolve to the same Spotify album ID, later Spotify candidates from that album receive a modest continuity bonus.
-16. Track changes scrobble the previous track when it is eligible.
-17. Repeated silence scrobbles the final eligible track and returns to ART Mode.
+16. Track changes record the previous eligible track in local SQLite history.
+17. Three consecutive silent checks record the final eligible track and return to ART Mode. Manual exits also record the final eligible track.
 18. The Sayo LED turns off.
 
 ## Source Files
@@ -117,10 +136,11 @@ Responsibilities:
 - BluOS polling and artwork rendering.
 - Analog recognition workflow orchestration.
 - Silence detection and retry timing.
-- Last.fm Now Playing refreshes and scrobble calls.
+- Local SQLite logging for BluOS playback and eligible analog tracks.
+- Live now-playing snapshot publication for BluOS and ANALOG Mode.
 - Spotify metadata correction orchestration.
 - Same-recording stabilization and metadata upgrades.
-- Normalizes the narrow Steven Wilson remix-title exception for active-track identity and Last.fm/display cleanup.
+- Normalizes the narrow Steven Wilson remix-title exception for active-track identity and display cleanup.
 - Two-track Spotify album-continuity state used as a conservative metadata-scoring hint.
 - One-track previous-album context used only to veto weak album-only protected-recording inference.
 - Catalog/series artist correction when an album title identifies the true artist, with guards against replacing a real artist with a shorter name fragment.
@@ -135,7 +155,6 @@ SAFE_MARGIN_X_RATIO = 0.08
 SAFE_MARGIN_Y_RATIO = 0.10
 PIXEL_ASPECT_X = 1.50
 ANALOG_RECHECK_SECONDS = 30
-LASTFM_NOW_PLAYING_REFRESH_SECONDS = 120
 SILENCE_THRESHOLD = 900
 SILENCE_CHECKS_BEFORE_EXIT = 3
 INITIAL_RECOGNITION_RETRY_SECONDS = 45
@@ -207,16 +226,34 @@ Responsibilities:
 - Falls back to iTunes artwork search when Spotify artwork is unavailable, accepting only exact normalized artist/album matches among up to 10 results.
 - Downloads artwork as RGB PIL images.
 
-### `lastfm.py`
+### `listening_history.py`
 
-Handles signed Last.fm API writes.
+Stores track plays in a local SQLite database (`listening_history.sqlite3`).
 
 Responsibilities:
 
-- Computes Last.fm API signatures.
-- Sends `track.updateNowPlaying`.
-- Sends `track.scrobble`.
-- Logs API error responses when available.
+- Writes analog play records after the existing provisional eligibility and deduplication checks.
+- Records BluOS plays with source, service, and estimated track start time.
+- Supports restart deduplication for an already-playing BluOS track.
+- Keeps listening history independent of the live Tronbyt display.
+
+The analog application records eligible tracks at three existing trigger points: accepted track change, manual ANALOG Mode exit, and automatic end-of-side silence. BluOS history is written when a playing track is observed, not when a paused/stopped last selection is polled.
+
+### `now_playing_state.py`
+
+Publishes the latest displayed artist, title, album, source, service, artwork path, and update timestamp to `now_playing.json`. Copies the artwork to `now_playing_artwork.jpg` when available.
+
+This runs independently of SQLite history eligibility. It preserves the most recently recognized track after playback stops. BluOS song titles receive narrow display-only cleanup of generic remaster wording, preserving meaningful mono/stereo, live, remix, and alternate-take distinctions. Raw BluOS history remains unchanged.
+
+### `now_playing_server.py`
+
+Serves the two now-playing snapshot files over HTTP on port `8765`, with no general filesystem access. Requests may include query parameters (such as the artwork cache-busting `?v=` timestamp). The Pi service is `stereo-now-playing.service`.
+
+### `tronbyt/stereo_now_playing.star`
+
+Pixlet/Starlark display app deployed to the Tronbyt server running natively on the Mac Pro, not on the Raspberry Pi. It reads the live JSON and JPEG over the local network, displays a compact 32×32 album image with title, artist, and optional clock, and uses a music-note placeholder when artwork is unavailable. It requires schema version 1 on the current Tronbyt installation.
+
+See `tronbyt/README.md` for configuration, testing, and troubleshooting.
 
 ## Project Directory
 
@@ -237,19 +274,21 @@ album_art.py
 analog_recognition.py
 archive/artwork_only_display.py
 archive/artwork_with_text_display.py
-archive/lastfm_auth.py
 assets/stereo-display.desktop
 assets/logrotate.d_stereo-display
 assets/sayo-led
-lastfm.py
-lastfm_config_sample.py
+listening_history.py
+now_playing_state.py
+now_playing_server.py
+tronbyt/stereo_now_playing.star
+tronbyt/README.md
 requirements.txt
 spotify_config_sample.py
 stereo_display.py
 stereo_display_dependencies.txt
 ```
 
-The public repository includes sample configuration files rather than live credentials. The virtual environment and runtime log are intentionally not committed.
+The public repository includes sample ACRCloud and Spotify configuration files rather than live credentials. The virtual environment, runtime logs, local history database, and now-playing snapshot files should not be committed. Last.fm files were removed after migrating to local history and now-playing.
 
 ## Dependencies
 
@@ -317,15 +356,7 @@ SPOTIFY_CLIENT_ID = "..."
 SPOTIFY_CLIENT_SECRET = "..."
 ```
 
-### `lastfm_config.py` / `lastfm_config_sample.py`
-
-Required variables:
-
-```python
-LASTFM_API_KEY = "..."
-LASTFM_SHARED_SECRET = "..."
-LASTFM_SESSION_KEY = "..."
-```
+No Last.fm API keys, shared secret, or session key are required. If an older installation still contains `lastfm_config.py`, remove it after confirming the new local setup works, and revoke any exposed credentials.
 
 ## Audio Capture
 
@@ -514,7 +545,7 @@ Jeff Beck Group -> Jeff Beck
 Charles Mingus Jr. -> Charles Mingus
 ```
 
-The one-way mappings allow known ACR catalog-credit variants to reach Spotify's canonical credit without making the reverse assumption for all solo-artist material. For example, ACRCloud may report `Charles Mingus Jr.` for a recording Spotify credits to `Charles Mingus`. The explicit equivalence permits Spotify correction without relaxing the general primary-artist safeguard. These are matching rules only; they do not globally rewrite artist names. After a successful Spotify correction, the display and Last.fm use Spotify's canonical primary-artist credit. If correction fails or no trustworthy Spotify match is found, the original ACRCloud credit remains, including `Charles Mingus Jr.`.
+The one-way mappings allow known ACR catalog-credit variants to reach Spotify's canonical credit without making the reverse assumption for all solo-artist material. For example, ACRCloud may report `Charles Mingus Jr.` for a recording Spotify credits to `Charles Mingus`. The explicit equivalence permits Spotify correction without relaxing the general primary-artist safeguard. These are matching rules only; they do not globally rewrite artist names. After a successful Spotify correction, the display, live snapshot, and local analog history use Spotify's canonical primary-artist credit. If correction fails or no trustworthy Spotify match is found, the original ACRCloud credit remains, including `Charles Mingus Jr.`.
 
 ACRCloud can also return multiple artist credits joined with a pipe, for example:
 
@@ -617,7 +648,7 @@ Anxiety's Moment - Steven Wilson Remix; 2016
 Anxiety's Moment
 ```
 
-For this project, those forms collapse to the same base title for Spotify matching, internal track identity, display cleanup, and Last.fm submission. Other remix, mix, edit, alternate-take, live, mono/stereo, and instrumental distinctions continue to use the normal protected-recording rules unless separately normalized by an existing narrow rule.
+For this project, those forms collapse to the same base title for Spotify matching, internal track identity, and display cleanup. Other remix, mix, edit, alternate-take, live, mono/stereo, and instrumental distinctions continue to use the normal protected-recording rules unless separately normalized by an existing narrow rule.
 
 
 
@@ -637,9 +668,9 @@ Stereo
 ```
 
 The code does not globally collapse these variants into one track. `Master Take` is the narrow exception during Spotify matching: an explicit trailing `(Master Take)` is searched and scored by the base title so the canonical released album version can compete, while alternate takes and numbered takes remain distinct.
-### Metadata Cleanup for Display and Last.fm
+### Metadata Cleanup for Display and Local History
 
-After ACRCloud and any Spotify correction, the active title and artist are cleaned and stored back into the result used by the CRT display, internal track comparison, and Last.fm.
+After ACRCloud and any Spotify correction, the active title and artist are cleaned and stored back into the result used by the CRT display, internal track comparison, local history, and live now-playing snapshot.
 
 Artist cleanup treats underscores as spaces so catalog-style ACRCloud names display normally:
 
@@ -729,26 +760,28 @@ iTunes artwork is requested at 600 × 600 resolution when a validated result sup
 
 Artwork is cached in memory during the current app run. Cache keys use Spotify album ID when available, otherwise artist / album / title.
 
-## Last.fm Behavior
+## Local Listening History
 
-The app uses Last.fm in three ways:
+`listening_history.py` persists eligible analog tracks and playing BluOS tracks to `listening_history.sqlite3`. The database is local to the Pi and is not used by Tronbyt to decide what to display.
 
-- Now Playing is sent when a track is first recognized, when a track changes, or when metadata for the same active recording is upgraded in place.
-- Now Playing is refreshed every 120 seconds while an identified analog track is active.
-- Scrobbles are sent when a track change occurs or when silence returns the app to ART Mode.
+### Analog History Triggers
 
-The final track on a side is scrobbled before ART Mode resumes if it is eligible.
+A track is written when:
 
-Last.fm does not provide a normal API method to explicitly clear Now Playing. When the app returns to ART Mode, it stops refreshing Now Playing and waits for Last.fm to expire the state on its side.
+- An accepted track change ends the previous track.
+- The user manually exits ANALOG Mode.
+- Three consecutive silence checks indicate the end of a side and the display returns to ART Mode.
 
-### Provisional Track Scrobbling
+The same normalized artist/title identity is used for deduplication within an analog session. These triggers were verified after the Last.fm integration was removed: track change logged id 105, manual exit logged id 106, and end-of-side silence logged id 107.
 
-The first recognized track in an analog session starts as provisional. It can display and update Last.fm Now Playing immediately, but it is not scrobbled until it is eligible.
+### Provisional Analog Track Eligibility
+
+The first recognized track in an analog session is provisional. It can appear immediately on the CRT and Tronbyt, but is not written to SQLite until it is eligible.
 
 A provisional track becomes eligible when either:
 
-- a later recheck confirms the same track, or
-- it has remained active long enough.
+- A later recheck confirms the same track, or
+- It has remained active long enough.
 
 The unconfirmed age requirement is adaptive:
 
@@ -756,13 +789,46 @@ The unconfirmed age requirement is adaptive:
 required seconds = min(45, max(20, duration_seconds * 0.50))
 ```
 
-This protects against high-confidence false initial recognitions while still allowing short tracks to scrobble when ACRCloud provides a duration.
+This protects against high-confidence false initial recognitions while allowing short legitimate tracks to qualify when ACRCloud provides their duration. Existing Python helper and constant names may still contain `scrobble`; they now govern local-history eligibility and have not been renamed to avoid changing tested behavior.
 
-### Scrobble Deduplication
+### Analog History Deduplication
 
-The app remembers the most recently scrobbled normalized track key. This prevents immediate duplicate scrobbles of the same track.
+The app remembers the most recently logged normalized artist/title key within the analog session. This prevents immediate duplicate writes of the same track. It does not treat the entire session as a permanent set: a track replayed after another track can be logged again.
 
-The dedupe is not a full set of every track in a session. If the same track appears again later after another track intervenes, it can scrobble again.
+### BluOS History
+
+The application records tracks while the Node reports active playback (`play` or `stream`), including the BluOS service (for example `QobuzConnect`). Playback elapsed seconds are used to estimate the actual track start. On application restart, the first observed track is checked against the latest stored BluOS play to avoid duplicating a track that was already in progress.
+
+The BluOS `/Status` parser uses dedicated `<artist>` and `<album>` XML fields when present, with `title2` and `title3` as fallbacks. The song title uses `title1`. BluOS history preserves this metadata instead of applying Tronbyt-only title cleanup.
+
+## Live Now Playing and Tronbyt
+
+The Raspberry Pi publishes two files, independent of history writes:
+
+```text
+/home/spieg16/repos/stereo-display/now_playing.json
+/home/spieg16/repos/stereo-display/now_playing_artwork.jpg
+```
+
+`now_playing_server.py`, running via `stereo-now-playing.service`, exposes only:
+
+```text
+http://raspberrypi.local:8765/now_playing.json
+http://raspberrypi.local:8765/now_playing_artwork.jpg
+```
+
+The Mac Pro Tronbyt server reads those endpoints from `tronbyt/stereo_now_playing.star`. The app supports the Pi URL setting, optional clock, and Demo Mode; the installed Tronbyt server requires Pixlet schema version 1. A changing `?v=<updated_at>` query parameter on artwork requests prevents stale album-art caching, and the Pi server handles it by using the parsed URL path.
+
+Live snapshots publish a recognized analog track before it qualifies for local history, and publish observed BluOS tracks without waiting for SQLite logging. When playback stops or ANALOG Mode exits, the most recent snapshot remains available until another track is published. For setup and diagnostics, see `tronbyt/README.md`.
+
+From the Mac Pro, verify both endpoints:
+
+```bash
+curl -sS http://raspberrypi.local:8765/now_playing.json
+curl -s -o /dev/null -w '%{http_code}\n' 'http://raspberrypi.local:8765/now_playing_artwork.jpg?v=123'
+```
+
+An HTTP 200 for artwork with a query parameter confirms that the server's path handling works. If Tronbyt continues showing a missing-artwork placeholder after a previously cached 404, restarting the Tronbyt server (`brew services restart tronbyt-server`) may clear that cache.
 
 ## Track Change Protection
 
@@ -786,15 +852,15 @@ Badlands (Live at Madison Square Garden, New York, NY - June/July 2000)
 Badlands
 ```
 
-The live detail is still preserved for display and Last.fm when ACRCloud provides it.
+The live detail is still preserved for display and local history when ACRCloud provides it.
 
 A separate recording-stability normalizer is used only to prevent ACRCloud from oscillating between alternate release descriptions of the same continuous audio. It can treat harmless differences such as stacked edition wording, minor spelling differences, slash-separated compound titles, and single-edit/base-title variants as the same recording under controlled conditions.
 
 For single-edit oscillation, the app does not globally erase `Single Edit`. Instead, if ACRCloud alternates between a compilation-labeled single edit and a base-title result tied to a stronger album, the active metadata can be upgraded to the base result and preserved if ACRCloud later flips back.
 
-For later same-track matches, the app may upgrade descriptive metadata in place—for example, replacing a generic `(Live)` title with a venue/date-specific live title. The track timer, confirmation state, and scrobble eligibility are preserved while artwork and Last.fm Now Playing are refreshed.
+For later same-track matches, the app may upgrade descriptive metadata in place—for example, replacing a generic `(Live)` title with a venue/date-specific live title. The track timer, confirmation state, and local-history eligibility are preserved while artwork and the live now-playing snapshot are refreshed.
 
-If a later recognition identifies the same recording with more descriptive live metadata—for example changing `Sivad (Live)` to `Sivad (Live at the Cellar Door, Washington, DC - December 1970)`—the app upgrades the active metadata without treating it as a track change. Playback timing, confirmation state, and scrobble eligibility are preserved, while artwork and Last.fm Now Playing are refreshed using the improved metadata.
+If a later recognition identifies the same recording with more descriptive live metadata—for example changing `Sivad (Live)` to `Sivad (Live at the Cellar Door, Washington, DC - December 1970)`—the app upgrades the active metadata without treating it as a track change. Playback timing, confirmation state, and local-history eligibility are preserved, while artwork and the live now-playing snapshot are refreshed using the improved metadata.
 
 
 ### Catalog/Series Artist Correction
@@ -899,6 +965,17 @@ pgrep -af stereo_display.py
 
 Overlapping instances can both call `arecord`, producing capture failures.
 
+### Now-playing HTTP Service
+
+The separate `stereo-now-playing.service` runs `now_playing_server.py` independently of the pygame desktop autostart application. Restart it after making changes to the HTTP server:
+
+```bash
+sudo systemctl restart stereo-now-playing.service
+sudo systemctl status stereo-now-playing.service
+```
+
+The server allows only the JSON and artwork snapshot paths. A web browser, Mac Pro, or another LAN client should be able to read those endpoints without accessing the local SQLite database.
+
 ## Logging
 
 Runtime log:
@@ -941,7 +1018,7 @@ ACR Match: Sonic Youth - Teen Age Riot (Album Version) (album=Daydream Nation (D
 Spotify metadata candidates for Sonic Youth - Teen Age Riot (Album Version) (ACR duration_ms=...):
   Sonic Youth | Teen Age Riot | Daydream Nation | album | release=1988-10-18 | duration_ms=... | score=100
 Now Playing: Sonic Youth - Teen Age Riot (Daydream Nation)
-Last.fm Now Playing: Sonic Youth - Teen Age Riot
+Local now playing (analog): Sonic Youth - Teen Age Riot
 Confirmed analog track: Sonic Youth - Teen Age Riot
 Inferred protected recording from matching Spotify album: Miles Davis - Little Church (live)
 Ignoring album-only protected recording inference due to previous-album studio match: Jeff Beck - Let Me Love You
@@ -950,9 +1027,8 @@ Corrected catalog-series artist from album metadata: Atlantic 60th -> John Coltr
 Spotify metadata correction: Frank Zappa - Go Cry On Somebody Else's Shoulder (...) -> The Mothers Of Invention - Go Cry On Somebody Else's Shoulder (Spotify album=Freak Out!, ...)
 Upgraded metadata for same analog track: Miles Davis - Sivad (Live at the Cellar Door, Washington, DC - December 1970) (Live-Evil)
 Track Change: Eagles - Those Shoes (score=100)
-Last.fm Scrobble: Eagles - Heartache Tonight
-Last.fm Now Playing: Eagles - Those Shoes
-Last.fm Now Playing Refresh: Eagles - Those Shoes
+Local history: Eagles - Heartache Tonight (id=...)
+Local now playing (analog): Eagles - Those Shoes
 Silence count: 3
 No audio detected. Switching back to ART mode.
 ```
@@ -965,7 +1041,7 @@ Some records are not fingerprinted well. The app may log repeated `ACR status: N
 
 ### ACRCloud can produce false matches
 
-False matches are possible, especially on records that have been heavily sampled, sparse jazz passages, runout grooves, or very short recognition windows. Current mitigations include RMS gating, longer initial samples, 12-second rechecks, low-score filtering, different-artist confidence thresholds, title normalization, provisional scrobble protection, and session-level scrobble deduplication.
+False matches are possible, especially on records that have been heavily sampled, sparse jazz passages, runout grooves, or very short recognition windows. Current mitigations include RMS gating, longer initial samples, 12-second rechecks, low-score filtering, different-artist confidence thresholds, title normalization, provisional local-history protection, and session-level history deduplication.
 
 ### Spotify correction is conservative, not authoritative
 
@@ -979,7 +1055,7 @@ Even after Spotify correction, album naming can vary across releases. The curren
 
 ACRCloud may identify the correct recording while alternating between different releases containing that recording (original albums, deluxe editions, session collections, budget compilations, retail bundles, and similar releases). Spotify correction reduces many of these cases but cannot eliminate all metadata variation because different fingerprints can legitimately resolve to different database entries.
 
-For a narrow class of same-track live recordings, the application can also upgrade the active metadata when a later ACRCloud recognition provides a more descriptive live title and release while still representing the same recording. This refreshes artwork and Last.fm Now Playing without resetting playback state or creating a track change.
+For a narrow class of same-track live recordings, the application can also upgrade the active metadata when a later ACRCloud recognition provides a more descriptive live title and release while still representing the same recording. This refreshes artwork and live now-playing metadata without resetting playback state or creating a track change.
 
 ### Compilation and release selection remain heuristic
 
@@ -1010,9 +1086,9 @@ If text still renders normally and `fc-list` completes quickly when run manually
 
 Any call to `arecord` blocks the pygame loop. Short 2-second samples are used while waiting for audio so mode switching stays responsive. Longer samples are used when identification quality matters.
 
-### Last.fm Now Playing clears on Last.fm's side
+### Now-playing snapshot retains the most recent track
 
-When returning to ART Mode, the app stops refreshing Now Playing. The old Now Playing entry can remain visible until Last.fm expires it.
+Returning to ART Mode or stopping BluOS playback does not clear the JSON snapshot. Tronbyt can continue displaying the last observed track until the next recognized or playing track is published. This is intentional and is independent of the SQLite history database.
 
 ## CRT-Specific Notes
 
@@ -1040,7 +1116,7 @@ If moving to a small HDMI LCD later, likely changes include:
 1. Install OS dependencies.
 2. Create and activate `venv`.
 3. Install `requirements.txt`.
-4. Copy or recreate redacted config files with real credentials.
+4. Copy or recreate the ACRCloud and Spotify config files with real credentials; Last.fm is not required.
 5. Confirm BluOS player IP in `stereo_display.py`.
 6. Confirm ALSA input device with `arecord -l`.
 7. Install or recreate the Sayo LED helper at `/usr/local/bin/sayo-led`.
@@ -1049,6 +1125,8 @@ If moving to a small HDMI LCD later, likely changes include:
 10. Configure logrotate.
 11. Run `black` on changed project files after edits.
 12. Reboot and watch `stereo-display.log`.
+13. Enable or start `stereo-now-playing.service` and confirm the JSON and artwork endpoints on port 8765.
+14. Install `tronbyt/stereo_now_playing.star` on the separate Mac Pro Tronbyt server and test track updates.
 
 ## Current Backlog / Future Enhancements
 
