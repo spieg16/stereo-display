@@ -938,6 +938,9 @@ def main():
     safe_w = sw - (safe_x * 2)
     safe_h = sh - (safe_y * 2)
 
+    # Compensate for CRT vertical image positioning.
+    safe_y -= 32
+
     art_rect = pygame.Rect(safe_x, safe_y, safe_w, safe_h)
 
     # BluOS art-mode state. etag lets Status long-poll efficiently.
