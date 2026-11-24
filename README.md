@@ -1,8 +1,8 @@
 # Stereo Display Documentation
 
-Last updated: 2026-11-21
+Last updated: 2026-11-24
 
-Documentation scope: includes the October and November 2026 Spotify scoring, protected-recording, artwork, duration-tiebreaker, and artist-credit changes; the November 2026 SQLite listening history, live now-playing snapshots, HTTP server, Tronbyt integration, and removal of Last.fm.
+Documentation scope: includes Spotify/ACRCloud recognition and correction, local SQLite history replacing Last.fm, live now-playing publication to Tronbyt, the authenticated LAN manual-history web app, automatic manual-to-recognition handoff, and the tested logrotate configuration.
 
 ## Overview
 
@@ -13,7 +13,7 @@ The current application has two operating modes:
 - **ART Mode** - displays BluOS album artwork from the BluOS local API.
 - **ANALOG Mode** - monitors an analog input, identifies music with ACRCloud, applies conservative Spotify metadata correction and stability safeguards, retrieves artwork, publishes live now-playing metadata, logs eligible tracks to local SQLite history, and returns to ART Mode after silence.
 
-The CRT app is primarily run from `stereo_display.py`. A separate HTTP server publishes the same live now-playing metadata and album artwork to the Tronbyt app running on the Mac Pro. Listening history is stored locally in SQLite; Last.fm is no longer used.
+The CRT app is primarily run from `stereo_display.py`. A separate HTTP server publishes the same live now-playing metadata and album artwork to the Tronbyt app running on the Mac Pro. Listening history is stored locally in SQLite; Last.fm is no longer used. A separate password-protected web app on the Pi allows manual album/song logging when recognition misses a recording, while publishing the chosen track to the same Tronbyt Now Playing feed.
 
 ## Current Hardware Setup
 
@@ -74,6 +74,13 @@ USB audio interface
         |
         v
   tronbyt/stereo_now_playing.star -> LED display
+
+Manual history web app (Pi, port 8766; password protected)
+        |
+        +-- Discogs release/tracklist search or manually entered song
+        +-- Selected album tracks -> same SQLite plays table (source=manual)
+        +-- Selected Now Playing track -> now_playing_state.py
+        +-- Automatic handoff on next new analog/BluOS publication
 
 SayoDevice 1x1P
         |
@@ -159,9 +166,8 @@ SILENCE_THRESHOLD = 900
 SILENCE_CHECKS_BEFORE_EXIT = 3
 INITIAL_RECOGNITION_RETRY_SECONDS = 45
 MIN_ACR_SCORE_FOR_DIFFERENT_ARTIST_CHANGE = 95
-MIN_UNCONFIRMED_TRACK_AGE_BEFORE_HISTORY_SECONDS = 45
-MIN_UNCONFIRMED_TRACK_DURATION_FRACTION_BEFORE_HISTORY = 0.50
-MIN_UNCONFIRMED_TRACK_AGE_FLOOR_BEFORE_HISTORY_SECONDS = 20
+# Provisional local-history eligibility: 20-second floor, 45-second cap,
+# and a 50% fraction of the recognized track duration.
 ```
 
 Current recording behavior in `stereo_display.py`:
@@ -249,6 +255,12 @@ This runs independently of SQLite history eligibility. It preserves the most rec
 
 Serves the two now-playing snapshot files over HTTP on port `8765`, with no general filesystem access. Requests may include query parameters (such as the artwork cache-busting `?v=` timestamp). The Pi service is `stereo-now-playing.service`.
 
+### `manual_history/` and `manual_history.service.example`
+
+`manual_history/app.py` is an authenticated Flask web interface, served by Waitress on port `8766` on the Pi. It uses Discogs search/release metadata or direct single-song entry; `manual_history/store.py` inserts `source=manual` plays into the existing SQLite database and checks for possible duplicate entries. Album track selection lives in `manual_history/templates/release.html`. The systemd unit template is `manual_history.service.example`.
+
+Manual submissions **always** publish a selected Now Playing track to `now_playing_state.py` and the existing Tronbyt endpoints. This is not a separate Tronbyt app or database. New automatic recognition or BluOS playback publication takes control again, without a Return to Auto button. See **Manual History Web Interface** below.
+
 ### `tronbyt/stereo_now_playing.star`
 
 Pixlet/Starlark display app deployed to the Tronbyt server running natively on the Mac Pro, not on the Raspberry Pi. It reads the live JSON and JPEG over the local network, displays a compact 32×32 album image with title, artist, and optional clock, and uses a music-note placeholder when artwork is unavailable. It requires schema version 1 on the current Tronbyt installation.
@@ -278,6 +290,8 @@ assets/stereo-display.desktop
 assets/logrotate.d_stereo-display
 assets/sayo-led
 listening_history.py
+manual_history/
+manual_history.service.example
 now_playing_state.py
 now_playing_server.py
 tronbyt/stereo_now_playing.star
@@ -288,7 +302,7 @@ stereo_display.py
 stereo_display_dependencies.txt
 ```
 
-The public repository includes sample ACRCloud and Spotify configuration files rather than live credentials. The virtual environment, runtime logs, local history database, and now-playing snapshot files should not be committed. Last.fm files were removed after migrating to local history and now-playing.
+The public repository includes sample ACRCloud and Spotify configuration files rather than live credentials. The virtual environment, runtime logs, local history database, `manual_now_playing.override` runtime marker, and now-playing snapshot files should not be committed. Keep the populated `~/.config/stereo-manual-history.env` outside Git. Last.fm files were removed after migrating to local history and now-playing.
 
 ## Dependencies
 
@@ -331,7 +345,7 @@ Optional/development package:
 hidapi
 ```
 
-`hidapi` is not imported by the current production app. It was used only for Sayo HID experiments.
+For the manual-history web app, install Flask and Waitress into the same virtual environment: `pip install Flask waitress`. It also uses the already installed `requests` and Pillow packages. `hidapi` is not imported by the current production app. It was used only for Sayo HID experiments.
 
 ## Configuration Files
 
@@ -789,7 +803,7 @@ The unconfirmed age requirement is adaptive:
 required seconds = min(45, max(20, duration_seconds * 0.50))
 ```
 
-This protects against high-confidence false initial recognitions while allowing short legitimate tracks to qualify when ACRCloud provides their duration. The corresponding helper functions are now named `get_unconfirmed_history_required_seconds()` and `is_track_history_eligible()`. Analog title cleanup is handled by `clean_analog_title()`.
+This protects against high-confidence false initial recognitions while allowing short legitimate tracks to qualify when ACRCloud provides their duration. The legacy scrobble-related helper and constant names were renamed to reflect local-history eligibility; the eligibility formula itself is unchanged.
 
 ### Analog History Deduplication
 
@@ -829,6 +843,122 @@ curl -s -o /dev/null -w '%{http_code}\n' 'http://raspberrypi.local:8765/now_play
 ```
 
 An HTTP 200 for artwork with a query parameter confirms that the server's path handling works. If Tronbyt continues showing a missing-artwork placeholder after a previously cached 404, restarting the Tronbyt server (`brew services restart tronbyt-server`) may clear that cache.
+
+## Manual History Web Interface
+
+The Pi hosts an Open Scrobbler-style, **LAN-only** interface at:
+
+```text
+http://raspberrypi.local:8766
+```
+
+The interface is intended primarily for vinyl or other analog recordings that ACRCloud cannot identify. It can also add a full album, an album side/subset, or one manually typed song. It does **not** send scrobbles to Last.fm.
+
+### Album and song workflow
+
+1. Sign in with the password used to generate the Werkzeug password hash, **not** the hash itself.
+2. Search Discogs by album/artist, paste a Discogs release URL or release ID, or use the individual-song form. Discogs search requires a personal access token and internet access.
+3. On an album page, use **Select all** or **Select none**, or check tracks individually. Each selected track becomes one `source=manual` SQLite history record. The song fields can be edited before submission.
+4. Choose which **selected** track should appear on Tronbyt using the **Now Playing** radio button. When exactly one track checkbox is selected, its Now Playing radio is selected automatically. With multiple tracks selected, the radio choice is retained; the radio track must be among the checked tracks at submission.
+5. Set the date/time of the **first selected track** or leave it empty for now. Subsequent times are estimated from track durations provided by Discogs; unknown durations mean the estimated sequence may be incomplete. The time is interpreted in the Pi's local timezone.
+6. Submit. A successful submission records the selected tracks in the existing SQLite history **and** publishes the selected song to `now_playing.json` (and artwork where available), which Tronbyt reads. Publishing Now Playing is **required**, not optional.
+
+The interface warns about likely duplicate artist/title history entries within 10 minutes of the proposed time and offers an explicit **Allow possible duplicates** option. Manual song entry currently does not source cover artwork, so Tronbyt may show a placeholder for it. Album artwork is retrieved from supported Discogs image hosts. The interface does not automatically cycle through all selected album tracks on Tronbyt.
+
+### Automatic handoff and duplicate suppression
+
+Manual Now Playing is a fallback for missed analog recognition, **not** a mode you must turn off:
+
+- Manual submission immediately updates the current Tronbyt snapshot.
+- Unsuccessful ACRCloud identification attempts leave the manual track displayed while recognition continues.
+- A **new successful analog recognition publication** or new BluOS playback publication overwrites the snapshot and clears the manual override automatically. No Return to Auto button is necessary.
+- Ordinary polling without a new published track should not replace the manual snapshot. A later metadata upgrade can also cause a publication and handoff.
+- When analog recognition later records the same artist/title as a recent manual entry (case-insensitive exact match, within 10 minutes of the start time), the history writer skips that duplicate. Different title spellings or artist credits may not match.
+
+The `manual_now_playing.override` marker is a **runtime state file**, not a backup or Git file. Leave it in place; the next successful automatic now-playing publication clears it. Manual history records remain in SQLite after handoff. These behaviors are implemented through `now_playing_state.py`, `listening_history.py`, and `manual_history/`.
+
+### Credentials and security
+
+Create this file **outside the repository**:
+
+```text
+/home/spieg16/.config/stereo-manual-history.env
+```
+
+Example values (replace every placeholder; don't commit or publish actual secrets):
+
+```dotenv
+MANUAL_HISTORY_SECRET_KEY='REPLACE_WITH_RANDOM_SECRET'
+MANUAL_HISTORY_PASSWORD_HASH='REPLACE_WITH_WERKZEUG_HASH'
+DISCOGS_TOKEN='REPLACE_WITH_DISCOGS_PERSONAL_TOKEN'
+```
+
+Generate a random Flask secret and a password hash in the Pi's virtual environment:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_hex(32))'
+python3 -c 'from werkzeug.security import generate_password_hash; import getpass; print(generate_password_hash(getpass.getpass()))'
+```
+
+Use the output hash in the environment file and the **original typed password** to sign in. Single quotes around the complete hash are important when loading the file with Bash because the hash contains `$` separators.
+
+```bash
+mkdir -p ~/.config
+chmod 700 ~/.config
+vi ~/.config/stereo-manual-history.env
+chmod 600 ~/.config/stereo-manual-history.env
+```
+
+The service reads the file via systemd `EnvironmentFile`; when starting Waitress manually, explicitly export it first:
+
+```bash
+cd ~/repos/stereo-display
+source venv/bin/activate
+set -a
+source ~/.config/stereo-manual-history.env
+set +a
+python3 -m waitress --listen=0.0.0.0:8766 manual_history.app:APP
+```
+
+The web app uses a login password, session cookie and CSRF protection, but the connection is **HTTP without TLS**. Use it only on a trusted home LAN; do not port-forward port `8766`. The separate port `8765` remains read-only and does not expose SQLite. `manual_history.service.example` uses user `spieg16`, `UMask=0077`, and other service restrictions.
+
+### One-time database preparation / reinstall
+
+The initial installation required a one-time migration of `plays.source` to include `manual`. On a **fresh** setup, back up `listening_history.sqlite3`, stop the CRT process and manual-history server, then follow `manual_history/README.md` for the migration procedure. Do **not** rerun integration patch scripts or migrate the working database as a routine startup operation. The temporary installers `install_integration.py` and `apply_auto_handoff.py` were used during installation and are not required to run the deployed app. The final handoff code should already be present in the committed Python modules.
+
+### Systemd setup, status, and troubleshooting
+
+The service template is `manual_history.service.example`. Install it once on the Pi (after testing the app manually), then use systemd to start it at boot:
+
+```bash
+cd ~/repos/stereo-display
+sudo cp manual_history.service.example /etc/systemd/system/stereo-manual-history.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now stereo-manual-history.service
+sudo systemctl status stereo-manual-history.service
+```
+
+If a manually launched Waitress process still occupies port `8766`, stop it before enabling the service. The service uses `/home/spieg16/repos/stereo-display/venv/bin/waitress-serve`, listens on `0.0.0.0:8766` for access from other LAN devices, and loads credentials from `~/.config/stereo-manual-history.env`. There is no need to run `source` when systemd starts it.
+
+Useful checks:
+
+```bash
+systemctl is-enabled stereo-manual-history.service
+systemctl is-active stereo-manual-history.service
+sudo journalctl -u stereo-manual-history.service -n 50 --no-pager
+```
+
+A `503 Service Unavailable` asking for `MANUAL_HISTORY_SECRET_KEY` and `MANUAL_HISTORY_PASSWORD_HASH` means the process did not receive its environment values. `Invalid password` usually means the typed password does not match the stored hash, or an unquoted `$` in a hash was expanded when sourced through a shell. Check without printing your secrets:
+
+```bash
+python3 - <<'PYCODE'
+import os, getpass
+from werkzeug.security import check_password_hash
+print('Password matches:', check_password_hash(os.environ['MANUAL_HISTORY_PASSWORD_HASH'], getpass.getpass('Password: ')))
+PYCODE
+```
+
+Run that check only in a shell where the environment file has already been loaded. Never share the environment file, password, secret key or token in issue reports. The interface currently offers adding records, not editing/deleting existing records; Discogs results can include many duplicate pressings, and improved search ranking remains a future enhancement.
 
 ## Track Change Protection
 
@@ -994,10 +1124,29 @@ Recommended logrotate configuration:
     copytruncate
     missingok
     notifempty
+    su spieg16 spieg16
 }
 ```
 
-Why `copytruncate` matters: the Python process keeps the log file open. `copytruncate` rotates the file without needing to restart the app.
+Why `copytruncate` matters: the Python process keeps the log file open. `copytruncate` rotates the file without needing to restart the app. **The `su spieg16 spieg16` directive is required** because the repository's parent directory is writable by a non-root user. Without it, logrotate skips the file with an "insecure permissions" error; this was diagnosed and corrected on November 24, 2026.
+
+The `logrotate.timer` systemd unit is enabled and runs daily. The rule keeps three compressed rotations. Verify the active rule, status, and archives with:
+
+```bash
+cat /etc/logrotate.d/stereo-display
+systemctl status logrotate.timer
+sudo grep -i 'stereo-display' /var/lib/logrotate/status
+ls -lh ~/repos/stereo-display/stereo-display.log*
+```
+
+Dry-run (no file changes) and manually invoke rotation when needed:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/stereo-display
+sudo logrotate -v /etc/logrotate.d/stereo-display
+```
+
+An active log can grow throughout the day; this rule uses **daily rotation**, not a size cap.
 
 Useful commands:
 
@@ -1127,13 +1276,19 @@ If moving to a small HDMI LCD later, likely changes include:
 12. Reboot and watch `stereo-display.log`.
 13. Enable or start `stereo-now-playing.service` and confirm the JSON and artwork endpoints on port 8765.
 14. Install `tronbyt/stereo_now_playing.star` on the separate Mac Pro Tronbyt server and test track updates.
+15. Back up the history database and, for a **fresh installation only**, complete the manual-source SQLite migration and integration documented in `manual_history/README.md`. The existing Pi has already been migrated; do not repeat it during routine deployment.
+16. Install Flask and Waitress, create `~/.config/stereo-manual-history.env` with mode `600` and populated secret key, Werkzeug password hash, and Discogs token.
+17. Test a manually entered song and an album submission; verify SQLite, `now_playing.json`, artwork, and Tronbyt. Confirm Select all/none and single-track Now Playing auto-selection.
+18. Verify automatic handoff: manual entry stays visible during failed ACRCloud matches, then yields to the next successful analog/BluOS publication. Check duplicate suppression when the same track is subsequently recognized.
+19. Install and enable `stereo-manual-history.service`; verify authenticated access from another device on the home LAN and that the service starts after reboot. Do not port-forward ports 8765 or 8766.
+20. Verify `/etc/logrotate.d/stereo-display` includes `su spieg16 spieg16`, and check the active daily logrotate timer and archives.
 
 ## Current Backlog / Future Enhancements
 
 Possible future improvements:
 
 - Cache Spotify metadata corrections by normalized artist/title to reduce repeated Spotify searches.
-- Add a manual override database for records ACRCloud cannot identify correctly.
+- Improve the existing manual-history interface with better Discogs search ranking and deduplication of pressings; manual song/album logging is already implemented.
 - Further improve release-selection heuristics for recordings that appear on multiple legitimate releases, especially where Spotify dates or archival releases make the canonical album ambiguous.
 - Add automated regression tests for studio-album selection (New York Dolls), competing live albums (Neil Young), album continuity, protected-recording suppression, and artwork fallback validation.
 - Improve canonical artist/title stabilization for recordings with legitimate multi-credit artist variants (for example Frank Zappa / The Mothers Of Invention) and minor title differences such as a leading `The`, without weakening general artist matching.
