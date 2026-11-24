@@ -530,6 +530,19 @@ def clean_metadata_title_for_display(title):
 def clean_metadata_album_for_display(album):
     album = (album or "").strip()
 
+    # Remove Rudy Van Gelder Edition mastering metadata,
+    # including combined remaster/RVG labels of any year.
+    album = re.sub(
+        r"\s*\(\s*"
+        r"(?:(?:\d{4}\s+)?(?:digital\s+)?remaster(?:ed)?"
+        r"(?:\s+\d{4})?\s*/\s*)?"
+        r"rudy\s+van\s+gelder\s+edition"
+        r"\s*\)$",
+        "",
+        album,
+        flags=re.IGNORECASE,
+    ).strip()
+
     album = re.sub(
         r"\s*\(\s*"
         r"(?:"
