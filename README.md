@@ -324,28 +324,66 @@ Package notes:
 
 ### Python Packages
 
-From `requirements.txt`:
+Install Python dependencies in the project virtual environment from the single maintained `requirements.txt`:
+
+```bash
+cd ~/repos/stereo-display
+source venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m pip check
+```
+
+The current pinned dependency set in `requirements.txt` is:
 
 ```text
 acrcloud==14.10.2020
+blinker==1.9.0
 certifi==2026.2.25
 charset-normalizer==3.4.5
+click==8.5.1
+Flask==3.1.3
 idna==3.11
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.4
 numpy==2.4.6
 pillow==12.1.1
 pyacrcloud==1.0.11
 pygame==2.6.1
 requests==2.32.5
 urllib3==2.6.3
+waitress==3.0.2
+Werkzeug==3.1.9
 ```
 
-Optional/development package:
+This list includes the application packages and pinned supporting dependencies from the updated environment. Flask powers the authenticated manual-history interface; Waitress serves it on the home LAN at port `8766`. Werkzeug provides password hashing and verification. `requests` is used for HTTP interactions, including Discogs lookups, and Pillow supports image processing. No separate `pip install Flask waitress` command is needed. `hidapi` is not required by the current production application; it was used for Sayo HID experiments.
 
-```text
-hidapi
+### Installing or syncing dependencies
+
+With the project virtual environment activated, install the exact versions in the committed requirements file and check for dependency conflicts:
+
+```bash
+cd ~/repos/stereo-display
+source venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m pip check
 ```
 
-For the manual-history web app, install Flask and Waitress into the same virtual environment: `pip install Flask waitress`. It also uses the already installed `requests` and Pillow packages. `hidapi` is not imported by the current production app. It was used only for Sayo HID experiments.
+`pip install -r requirements.txt` installs the pinned versions; it does not automatically upgrade packages beyond those pins. If you have just updated the requirements file, restart the affected application/services and verify ART mode, analog recognition, metadata enrichment, the manual-history web interface, SQLite logging, and Tronbyt Now Playing.
+
+### Reviewing future dependency updates
+
+For future upgrades, first capture the installed environment and check available versions:
+
+```bash
+cd ~/repos/stereo-display
+source venv/bin/activate
+python3 -m pip freeze > ~/stereo-display-pip-before-upgrade.txt
+python3 -m pip list --outdated
+python3 -m pip check
+```
+
+Review updates before changing pins, especially for NumPy, pygame, Pillow, and ACRCloud-related packages because the Pi uses native extensions and audio/display integrations. After editing `requirements.txt`, reinstall from that file, run `pip check`, and smoke-test the CRT display, BluOS mode, ACRCloud analog recognition, Spotify enrichment, manual-history login and search, database writes, and automatic handoff to Tronbyt. Keep the freeze file outside Git as a local rollback reference.
 
 ## Configuration Files
 
@@ -1277,7 +1315,7 @@ If moving to a small HDMI LCD later, likely changes include:
 13. Enable or start `stereo-now-playing.service` and confirm the JSON and artwork endpoints on port 8765.
 14. Install `tronbyt/stereo_now_playing.star` on the separate Mac Pro Tronbyt server and test track updates.
 15. Back up the history database and, for a **fresh installation only**, complete the manual-source SQLite migration and integration documented in `manual_history/README.md`. The existing Pi has already been migrated; do not repeat it during routine deployment.
-16. Install Flask and Waitress, create `~/.config/stereo-manual-history.env` with mode `600` and populated secret key, Werkzeug password hash, and Discogs token.
+16. Install `requirements.txt` in the virtual environment (including Flask and Waitress), then create `~/.config/stereo-manual-history.env` with mode `600` and populated secret key, Werkzeug password hash, and Discogs token.
 17. Test a manually entered song and an album submission; verify SQLite, `now_playing.json`, artwork, and Tronbyt. Confirm Select all/none and single-track Now Playing auto-selection.
 18. Verify automatic handoff: manual entry stays visible during failed ACRCloud matches, then yields to the next successful analog/BluOS publication. Check duplicate suppression when the same track is subsequently recognized.
 19. Install and enable `stereo-manual-history.service`; verify authenticated access from another device on the home LAN and that the service starts after reboot. Do not port-forward ports 8765 or 8766.
