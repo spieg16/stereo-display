@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 STATE_DIR = Path(__file__).resolve().parent
+MANUAL_OVERRIDE_PATH = STATE_DIR / "manual_now_playing.override"
 STATE_PATH = STATE_DIR / "now_playing.json"
 ARTWORK_PATH = STATE_DIR / "now_playing_artwork.jpg"
 
@@ -23,12 +24,16 @@ def publish_now_playing(
     Returns True when a snapshot was written; false for incomplete metadata.
     This is not a listening-history write or playback confirmation.
     """
+    # A manual selection stays visible until the caller publishes a new
+    # recognized track or changed BluOS playback. Unrecognized analog audio
+    # does not call this publisher, so manual metadata remains displayed.
+
     result = result or {}
     artist = str(result.get("artist") or "").strip()
     title = str(result.get("title") or "").strip()
     if not artist or not title:
         return False
-    if source not in ("analog", "bluos"):
+    if source not in ("analog", "bluos", "manual"):
         raise ValueError(f"Unsupported source: {source}")
 
     path = Path(state_path)
@@ -69,4 +74,9 @@ def publish_now_playing(
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
+    if source == "manual":
+        MANUAL_OVERRIDE_PATH.touch()
+    elif source in ("analog", "bluos"):
+        # Release only after a successful automatic Now Playing publication.
+        MANUAL_OVERRIDE_PATH.unlink(missing_ok=True)
     return True

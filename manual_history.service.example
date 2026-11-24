@@ -1,0 +1,20 @@
+[Unit]
+Description=Stereo Display Manual History Web App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spieg16
+Group=spieg16
+WorkingDirectory=/home/spieg16/repos/stereo-display
+EnvironmentFile=/home/spieg16/.config/stereo-manual-history.env
+ExecStart=/home/spieg16/repos/stereo-display/venv/bin/waitress-serve --listen=0.0.0.0:8766 manual_history.app:APP
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

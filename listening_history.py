@@ -56,6 +56,16 @@ def record_play(result, source, started_at=None, db_path=DEFAULT_DB_PATH, servic
     play_started = int(started_at) if started_at is not None else logged_at
     initialize_database(db_path)
     with sqlite3.connect(db_path, timeout=5) as connection:
+        # Manual analog fallback may be recognized later. Avoid logging it twice.
+        # Match artist/title and a nearby playback start; don't affect BluOS.
+        if source == "analog" and connection.execute(
+            """SELECT 1 FROM plays
+               WHERE source='manual' AND artist=? COLLATE NOCASE
+                 AND title=? COLLATE NOCASE
+                 AND started_at BETWEEN ? AND ? LIMIT 1""",
+            (artist, title, play_started - 600, play_started + 600),
+        ).fetchone():
+            return None
         cursor = connection.execute(
             """
             INSERT INTO plays (

@@ -1,0 +1,21 @@
+{% extends 'base.html' %}{% block content %}<div class="row panel">{% if release.images %}<img class="cover" src="{{release.images[0].uri150 or release.images[0].uri}}">{% endif %}<div><h2>{{release.title}}</h2><p>{{artist}} · {{release.year or ''}}</p><small>Discogs release {{release.id}}</small></div></div><form class="panel" method="post" action="{{url_for('submit')}}"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="artist" value="{{artist}}"><input type="hidden" name="album" value="{{release.title}}"><input type="hidden" name="cover" value="{{release.images[0].uri if release.images else ''}}"><h3>Tracks to log</h3><p class="muted">Select tracks to log and choose which one should appear as Now Playing. All fields are editable.</p><p class="small"><button type="button" id="select-all-tracks">Select all</button> <button type="button" id="select-no-tracks">Select none</button></p>{% for t in tracks %}<div class="track"><input type="checkbox" name="selected" value="{{loop.index0}}" checked><span class="muted">{{t.position}}</span><label><input type="text" name="title" value="{{t.title}}" required><input type="hidden" name="artist_{{loop.index0}}" value="{{t.artist}}"></label><input type="hidden" name="duration" value="{{t.duration}}"><small>{{t.duration}}</small><input type="radio" name="now_index" value="{{loop.index0}}" {% if loop.last %}checked{% endif %} title="Now Playing track"></div>{% endfor %}<p class="small">Radio button = track shown on Tronbyt. Duration gaps may make approximate timestamps; review before saving.</p><div class="row"><label>First selected track started at (leave empty for now) <input type="datetime-local" name="played_at"></label><label><input type="checkbox" name="confirm_duplicates" value="1"> Allow possible duplicates</label></div><p><button>Log selected tracks + update Tronbyt</button></p></form><script>
+  const trackForm = document.querySelector('form[action="{{ url_for('submit') }}"]');
+  const trackCheckboxes = trackForm.querySelectorAll('input[type="checkbox"][name="selected"]');
+  function updateNowPlayingForSingleSelection() {
+    const selected = Array.from(trackCheckboxes).filter(checkbox => checkbox.checked);
+    if (selected.length === 1) {
+      const radio = trackForm.querySelector('input[type="radio"][name="now_index"][value="' + selected[0].value + '"]');
+      if (radio) radio.checked = true;
+    }
+  }
+  trackCheckboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', updateNowPlayingForSingleSelection);
+  });
+  updateNowPlayingForSingleSelection();
+  document.getElementById('select-all-tracks').addEventListener('click', () => {
+    trackCheckboxes.forEach(checkbox => { checkbox.checked = true; });
+  });
+  document.getElementById('select-no-tracks').addEventListener('click', () => {
+    trackCheckboxes.forEach(checkbox => { checkbox.checked = false; });
+  });
+</script>{% endblock %}

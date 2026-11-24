@@ -27,3 +27,15 @@ listening_history.sqlite3
 # Tidbyt now-playing state
 now_playing.json
 now_playing_artwork.jpg
+
+# Runtime files
+manual_now_playing.override
+listening_history.sqlite3
+listening_history.sqlite3.bak
+stereo-display.log
+
+# Local environments and credentials
+venv/
+__pycache__/
+acr_config.py
+spotify_config.py
