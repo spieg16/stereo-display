@@ -363,6 +363,14 @@ def normalize_metadata_title_for_match(value):
         ):
             value = value[: parenthetical_match.start()].strip()
 
+    # Remove bracketed remaster metadata, regardless of year.
+    value = re.sub(
+        r"\s*\[\s*\d{4}\s*-\s*remaster(?:ed)?\s*\]$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # Remove Rudy Van Gelder Edition mastering metadata, regardless of year.
     value = re.sub(
         r"\s*(?:/\s*|-\s*|\(\s*)rudy\s+van\s+gelder\s+edition\s*\)?$",
@@ -448,6 +456,14 @@ def looks_like_single_release(album_name):
 # "(Love Song)", "(Live)", "(Part 2)", or "(Alternate Take)".
 def clean_metadata_title_for_display(title):
     title = (title or "").strip()
+
+    # Remove bracketed remaster metadata, regardless of year.
+    title = re.sub(
+        r"\s*\[\s*\d{4}\s*-\s*remaster(?:ed)?\s*\]$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
 
     # Remove Rudy Van Gelder Edition mastering metadata, regardless of year.
     title = re.sub(
@@ -536,7 +552,7 @@ def clean_metadata_album_for_display(album):
         r"\s*\(\s*"
         r"(?:(?:\d{4}\s+)?(?:digital\s+)?remaster(?:ed)?"
         r"(?:\s+\d{4})?\s*/\s*)?"
-        r"rudy\s+van\s+gelder\s+edition"
+        r"(?:the\s+)?rudy\s+van\s+gelder\s+edition"
         r"\s*\)$",
         "",
         album,

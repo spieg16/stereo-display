@@ -121,7 +121,7 @@ Current workflow:
 8. If recognized, the result is passed through conservative Spotify metadata correction.
 9. Generic title metadata and punctuation differences are normalized for Spotify candidate scoring, while meaningful recording variants remain protected.
 10. Protected recordings (live, unplugged, concert, etc.) are matched only to equivalent protected recordings; Spotify compilation results may also provide evidence that ACRCloud omitted the protected marker.
-11. The active title and artist are cleaned before display, internal comparison, and local history.
+11. The active title and artist are cleaned before display, internal comparison, and local history. Album names receive an additional CRT display cleanup, including when no Spotify correction is accepted.
 12. The app retrieves artwork, publishes a live now-playing snapshot, and displays the track.
 13. During playback, the app records 12-second recheck samples every 30 seconds. The interval begins after recognition and artwork processing finish.
 14. Later ACRCloud matches can upgrade or preserve metadata for the same continuous recording without creating false track changes.
@@ -148,6 +148,7 @@ Responsibilities:
 - Spotify metadata correction orchestration.
 - Same-recording stabilization and metadata upgrades.
 - Normalizes the narrow Steven Wilson remix-title exception for active-track identity and display cleanup.
+- Applies `clean_metadata_album_for_display()` when rendering the ANALOG album label, including ACRCloud fallback results.
 - Two-track Spotify album-continuity state used as a conservative metadata-scoring hint.
 - One-track previous-album context used only to veto weak album-only protected-recording inference.
 - Catalog/series artist correction when an album title identifies the true artist, with guards against replacing a real artist with a shorter name fragment.
@@ -225,6 +226,8 @@ Responsibilities:
 - Protects live, unplugged, concert, and similar recordings from studio normalization while allowing safe corrections between equivalent protected recordings.
 - Infers missing protected-recording metadata conservatively, including safeguards for deluxe albums and weak previous-album context.
 - Normalizes generic ACR title suffixes, punctuation, and apostrophe differences for Spotify candidate scoring.
+- Removes trailing `Rudy Van Gelder Edition` mastering labels (including forms combined with a remaster year) in track matching/display cleanup, without collapsing live or alternate-take versions.
+- Cleans generic album-edition labels using `clean_metadata_album_for_display()`, including Rudy Van Gelder Edition parentheticals.
 - Applies the narrow Steven Wilson remix-title exception during metadata matching/display cleanup while leaving other remixes protected.
 - Supports narrowly defined artist-credit equivalences for known catalog-credit differences.
 - Splits compound ACR artist credits joined with `|` and checks each component independently during Spotify matching.
@@ -680,7 +683,8 @@ Spotify sometimes formats the same title differently from ACRCloud. Matching nor
 Album Version / LP Version metadata
 mono / stereo version metadata, including parentheses and square brackets
 remaster wording
-bracketed remaster wording
+Rudy Van Gelder Edition suffixes, with or without leading `The` (independent of remaster year)
+bracketed remaster wording, including `[2002 - Remaster]`
 comma, colon, slash, dash, and apostrophe differences
 safe descriptive aliases in trailing parentheses
 Master Take when ACRCloud uses it for the released master recording
@@ -748,7 +752,14 @@ Mono Version / [Mono Version]
 Stereo Version / [Stereo Version]
 ```
 
-Generic bracketed remaster tags (for example `[2019 Remaster]`) are also removed while preserving meaningful version information such as `(1969 Mix)`.
+Generic bracketed remaster tags (for example `[2019 Remaster]` and `[2002 - Remaster]`) are also removed while preserving meaningful version information such as `(1969 Mix)`. Trailing `Rudy Van Gelder Edition`, optionally prefixed by `The`, is ignored regardless of remaster year. The cleaner handles stacked suffixes in order, for example:
+
+```text
+Slow Drag - Remastered 2002/Rudy Van Gelder Edition -> Slow Drag
+Secret Love (Rudy Van Gelder Edition) [2002 - Remaster] -> Secret Love
+```
+
+Both `normalize_metadata_title_for_match()` and `clean_metadata_title_for_display()` cover these cases. Live and alternate-take qualifiers remain meaningful.
 
 It does not remove meaningful text such as:
 
@@ -770,6 +781,7 @@ Expanded Reissue
 Bonus Track Edition
 Special Edition
 Legacy Edition
+Rudy Van Gelder Edition / The Rudy Van Gelder Edition (including combined year/remaster parentheticals)
 - 40ème Anniversaire
 ```
 
@@ -779,6 +791,12 @@ It preserves meaningful album parentheticals such as:
 Original Soundtrack
 White Album
 ```
+
+For example, `Slow Drag (Remastered 2002/Rudy Van Gelder Edition)`, `Slow Drag (The Rudy Van Gelder Edition)`, and `Blue Train (Rudy Van Gelder Edition)` are cleaned to their base album names. The cleanup does not strip album identity terms such as `Original Soundtrack` or intentional mono edition labels.
+
+**Verified recognition example (November 24, 2026):** ACRCloud identified Donald Byrd’s `Secret Love (Rudy Van Gelder Edition) [2002 - Remaster]` on `Slow Drag (The Rudy Van Gelder Edition)`. After the normalization update, Spotify scored the correct *Slow Drag* album candidate at **100** (previously **50**), the corrected Now Playing metadata displayed `Donald Byrd - Secret Love (Slow Drag)`, and Spotify artwork downloaded successfully using album ID `6Hiv5Xc8ltOoFvnKXOIdJJ`. This confirms the combined title-and-album cleanup on that track; it does not establish that every edition variant will resolve correctly.
+
+**ANALOG CRT rendering:** `stereo_display.py` calls `clean_metadata_album_for_display(analog_result.get("album"))` when preparing the album label, even if Spotify did not supply a confident correction. This is a presentation-stage cleanup: that call does not rewrite `analog_result`, change Spotify album IDs, or modify the artwork lookup and continuity decisions. Other existing upstream metadata cleanups may already affect the values used for history and the now-playing JSON; do not assume the CRT-only cleanup changes those outputs. BluOS, the manual-history web app, and Tronbyt do not receive new album-cleaning rules from this change.
 
 ### Spotify Album Selection
 
@@ -1282,6 +1300,7 @@ Returning to ART Mode or stopping BluOS playback does not clear the JSON snapsho
 The current UI is tuned for a small composite CRT:
 
 - Safe-area margins protect against overscan.
+- The CRT-safe area is shifted upward by 32 pixels (`safe_y -= 32` after `safe_h` is calculated) to compensate for the observed vertical positioning on the current CRT. Both ART and ANALOG modes share this adjustment; the individual ANALOG artwork and Recording indicator offsets retain their original values.
 - Text is intentionally large.
 - Artwork is placed conservatively.
 - Analog cover art is drawn wider than tall so it appears visually correct through the composite/CRT chain.
