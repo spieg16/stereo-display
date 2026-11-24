@@ -14,6 +14,7 @@ from album_art import (
     fetch_artwork_for_analog_result,
     download_artwork_image,
     correct_metadata_with_spotify,
+    clean_metadata_album_for_display,
 )
 from analog_recognition import recognize_sample
 
@@ -1187,7 +1188,10 @@ def main():
 
                     title = analog_result.get("title") or "Unknown title"
                     artist = analog_result.get("artist") or "Unknown artist"
-                    album = analog_result.get("album") or "Unknown album"
+                    album = (
+                        clean_metadata_album_for_display(analog_result.get("album"))
+                        or "Unknown album"
+                    )
 
                     title_lines = []
                     words = title.split()
