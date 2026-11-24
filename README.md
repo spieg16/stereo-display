@@ -338,25 +338,25 @@ The current pinned dependency set in `requirements.txt` is:
 ```text
 acrcloud==14.10.2020
 blinker==1.9.0
-certifi==2026.2.25
-charset-normalizer==3.4.5
+certifi==2026.11.20
+charset-normalizer==3.5.3
 click==8.5.1
 Flask==3.1.3
-idna==3.11
+idna==3.20
 itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.4
-numpy==2.4.6
+numpy==2.5.5
 pillow==12.1.1
-pyacrcloud==1.0.11
+pyacrcloud==1.0.12
 pygame==2.6.1
-requests==2.32.5
-urllib3==2.6.3
+requests==2.34.2
+urllib3==2.8.0
 waitress==3.0.2
 Werkzeug==3.1.9
 ```
 
-This list includes the application packages and pinned supporting dependencies from the updated environment. Flask powers the authenticated manual-history interface; Waitress serves it on the home LAN at port `8766`. Werkzeug provides password hashing and verification. `requests` is used for HTTP interactions, including Discogs lookups, and Pillow supports image processing. No separate `pip install Flask waitress` command is needed. `hidapi` is not required by the current production application; it was used for Sayo HID experiments.
+This is the pinned package set after the November 24, 2026 dependency update. `pillow==12.1.1` is intentionally retained rather than upgrading to the newer major release without a separate compatibility test. The latest reported `pip check` found no broken requirements, but application-level playback and recognition testing is still necessary. Flask powers the authenticated manual-history interface; Waitress serves it on the home LAN at port `8766`. Werkzeug provides password hashing and verification. `requests` is used for HTTP interactions, including Discogs lookups, and Pillow supports image processing. No separate `pip install Flask waitress` command is needed. `hidapi` is not required by the current production application; it was used for Sayo HID experiments.
 
 ### Installing or syncing dependencies
 
