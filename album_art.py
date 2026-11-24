@@ -363,6 +363,14 @@ def normalize_metadata_title_for_match(value):
         ):
             value = value[: parenthetical_match.start()].strip()
 
+    # Remove Rudy Van Gelder Edition mastering metadata, regardless of year.
+    value = re.sub(
+        r"\s*(?:/\s*|-\s*|\(\s*)rudy\s+van\s+gelder\s+edition\s*\)?$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # Remove common remaster suffixes.
     #
     # Examples:
@@ -440,6 +448,14 @@ def looks_like_single_release(album_name):
 # "(Love Song)", "(Live)", "(Part 2)", or "(Alternate Take)".
 def clean_metadata_title_for_display(title):
     title = (title or "").strip()
+
+    # Remove Rudy Van Gelder Edition mastering metadata, regardless of year.
+    title = re.sub(
+        r"\s*(?:/\s*|-\s*|\(\s*)rudy\s+van\s+gelder\s+edition\s*\)?$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
 
     title = re.sub(
         r"\s*\(\s*(?:\d{4}\s+)?"
