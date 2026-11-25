@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 {% block content %}
 <div class="panel">
-  <h3>Search Discogs masters</h3>
+  <h3>Search Discogs Masters</h3>
   <form action="{{ url_for('search') }}" class="row">
     <input class="grow" type="text" name="q" required placeholder="Artist, album, or Discogs master/release URL">
-    <button>Search albums</button>
+    <button>Search Albums</button>
   </form>
   <p class="muted small">Results show master releases, not individual pressings. You can still paste a specific Discogs release URL. For a single song, use <a href="{{ url_for('song') }}">manual song entry</a>.</p>
 </div>
@@ -18,9 +18,9 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     {% if plays %}
     <div class="row" style="margin-bottom:12px">
-      <button type="button" id="history-select-all">Select all</button>
-      <button type="button" id="history-select-none">Select none</button>
-      <button type="submit" id="history-delete" disabled>Delete selected</button>
+      <button type="button" id="history-select-all">Select All</button>
+      <button type="button" id="history-select-none">Select None</button>
+      <button type="submit" id="history-delete" disabled>Delete Selected</button>
       <small id="history-selection-count" aria-live="polite">0 selected</small>
     </div>
     {% endif %}
