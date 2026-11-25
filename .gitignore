@@ -39,3 +39,5 @@ venv/
 __pycache__/
 acr_config.py
 spotify_config.py
+
+stereo-display.log*
