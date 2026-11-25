@@ -1,8 +1,8 @@
 # Stereo Display Documentation
 
-Last updated: 2026-11-24
+Last updated: 2026-11-25
 
-Documentation scope: includes Spotify/ACRCloud recognition and correction, local SQLite history replacing Last.fm, live now-playing publication to Tronbyt, the authenticated LAN manual-history web app, automatic manual-to-recognition handoff, and the tested logrotate configuration.
+Documentation scope: includes Spotify/ACRCloud recognition and correction, local SQLite history replacing Last.fm, live now-playing publication to Tronbyt, the authenticated LAN manual-history web app with Discogs master-release search and bulk history deletion, automatic manual-to-recognition handoff, and the tested logrotate configuration.
 
 ## Overview
 
@@ -77,8 +77,9 @@ USB audio interface
 
 Manual history web app (Pi, port 8766; password protected)
         |
-        +-- Discogs release/tracklist search or manually entered song
+        +-- Discogs master-release search, specific-release lookup, or manually entered song
         +-- Selected album tracks -> same SQLite plays table (source=manual)
+        +-- Recent history selection/deletion -> selected SQLite play IDs
         +-- Selected Now Playing track -> now_playing_state.py
         +-- Automatic handoff on next new analog/BluOS publication
 
@@ -260,7 +261,7 @@ Serves the two now-playing snapshot files over HTTP on port `8765`, with no gene
 
 ### `manual_history/` and `manual_history.service.example`
 
-`manual_history/app.py` is an authenticated Flask web interface, served by Waitress on port `8766` on the Pi. It uses Discogs search/release metadata or direct single-song entry; `manual_history/store.py` inserts `source=manual` plays into the existing SQLite database and checks for possible duplicate entries. Album track selection lives in `manual_history/templates/release.html`. The systemd unit template is `manual_history.service.example`.
+`manual_history/app.py` is an authenticated Flask web interface, served by Waitress on port `8766` on the Pi. Album searches use Discogs **master releases** rather than enumerating individual pressings; a specific Discogs release URL/ID can still be used when that edition is needed. The app also accepts direct single-song entry. `manual_history/store.py` inserts `source=manual` plays into the existing SQLite database, checks for possible duplicate entries, and supports deletion of selected existing plays by ID. Recent-history selection/deletion controls are in `manual_history/templates/index.html`; album track selection is in `manual_history/templates/release.html`. The systemd unit template is `manual_history.service.example`.
 
 Manual submissions **always** publish a selected Now Playing track to `now_playing_state.py` and the existing Tronbyt endpoints. This is not a separate Tronbyt app or database. New automatic recognition or BluOS playback publication takes control again, without a Return to Auto button. See **Manual History Web Interface** below.
 
@@ -305,7 +306,7 @@ stereo_display.py
 stereo_display_dependencies.txt
 ```
 
-The public repository includes sample ACRCloud and Spotify configuration files rather than live credentials. The virtual environment, runtime logs, local history database, `manual_now_playing.override` runtime marker, and now-playing snapshot files should not be committed. Keep the populated `~/.config/stereo-manual-history.env` outside Git. Last.fm files were removed after migrating to local history and now-playing.
+The public repository includes sample ACRCloud and Spotify configuration files rather than live credentials. The virtual environment, runtime logs and rotated `stereo-display.log*.gz` archives, local history database, `manual_now_playing.override` runtime marker, and now-playing snapshot files should not be committed. The repository `.gitignore` uses `stereo-display.log*` to exclude both active and rotated logs. Keep the populated `~/.config/stereo-manual-history.env` outside Git. Last.fm files were removed after migrating to local history and now-playing.
 
 ## Dependencies
 
@@ -913,13 +914,19 @@ The interface is intended primarily for vinyl or other analog recordings that AC
 ### Album and song workflow
 
 1. Sign in with the password used to generate the Werkzeug password hash, **not** the hash itself.
-2. Search Discogs by album/artist, paste a Discogs release URL or release ID, or use the individual-song form. Discogs search requires a personal access token and internet access.
+2. Search Discogs by album/artist. **Search results are limited to master releases**, avoiding the many pressing/CD/reissue versions returned by release search. Select a master to load its tracklist. Alternatively, paste a specific Discogs release URL or release ID when a particular edition matters, or use the individual-song form. Discogs search requires a personal access token and internet access.
 3. On an album page, use **Select all** or **Select none**, or check tracks individually. Each selected track becomes one `source=manual` SQLite history record. The song fields can be edited before submission.
 4. Choose which **selected** track should appear on Tronbyt using the **Now Playing** radio button. When exactly one track checkbox is selected, its Now Playing radio is selected automatically. With multiple tracks selected, the radio choice is retained; the radio track must be among the checked tracks at submission.
 5. Set the date/time of the **first selected track** or leave it empty for now. Subsequent times are estimated from track durations provided by Discogs; unknown durations mean the estimated sequence may be incomplete. The time is interpreted in the Pi's local timezone.
 6. Submit. A successful submission records the selected tracks in the existing SQLite history **and** publishes the selected song to `now_playing.json` (and artwork where available), which Tronbyt reads. Publishing Now Playing is **required**, not optional.
 
-The interface warns about likely duplicate artist/title history entries within 10 minutes of the proposed time and offers an explicit **Allow possible duplicates** option. Manual song entry currently does not source cover artwork, so Tronbyt may show a placeholder for it. Album artwork is retrieved from supported Discogs image hosts. The interface does not automatically cycle through all selected album tracks on Tronbyt.
+The interface warns about likely duplicate artist/title history entries within 10 minutes of the proposed time and offers an explicit **Allow possible duplicates** option. Manual song entry currently does not source cover artwork, so Tronbyt may show a placeholder for it. Album artwork is retrieved from supported Discogs image hosts. The interface does not automatically cycle through all selected album tracks on Tronbyt. A master-release tracklist may differ from a particular edition; use the direct release lookup when exact pressing-specific tracks are important.
+
+### Recent listening history and deletion
+
+The **History** view shows recent SQLite listening-history entries. Use the row checkboxes to select individual plays, **Select all** to select the displayed entries, or **Select none** to clear the selection. **Delete selected** prompts for confirmation and deletes only those selected database play IDs. Deletion works for manual, analog, and BluOS history entries; it is not restricted to manually logged tracks.
+
+**Deletion is permanent.** Back up `listening_history.sqlite3` before bulk cleanup, particularly on a newly installed version. Deleting history rows does **not** change the live `now_playing.json` snapshot or the track currently displayed on Tronbyt. This is a history-management operation, not a Now Playing control or a way to stop automatic recognition.
 
 ### Automatic handoff and duplicate suppression
 
@@ -1014,7 +1021,7 @@ print('Password matches:', check_password_hash(os.environ['MANUAL_HISTORY_PASSWO
 PYCODE
 ```
 
-Run that check only in a shell where the environment file has already been loaded. Never share the environment file, password, secret key or token in issue reports. The interface currently offers adding records, not editing/deleting existing records; Discogs results can include many duplicate pressings, and improved search ranking remains a future enhancement.
+Run that check only in a shell where the environment file has already been loaded. Never share the environment file, password, secret key or token in issue reports. The interface supports adding plays and deleting selected history records, but does not provide in-place editing of existing plays. Album search uses Discogs masters to avoid individual pressing duplicates; a specific release lookup remains available for edition-specific tracklists.
 
 ## Track Change Protection
 
@@ -1186,7 +1193,7 @@ Recommended logrotate configuration:
 
 Why `copytruncate` matters: the Python process keeps the log file open. `copytruncate` rotates the file without needing to restart the app. **The `su spieg16 spieg16` directive is required** because the repository's parent directory is writable by a non-root user. Without it, logrotate skips the file with an "insecure permissions" error; this was diagnosed and corrected on November 24, 2026.
 
-The `logrotate.timer` systemd unit is enabled and runs daily. The rule keeps three compressed rotations. Verify the active rule, status, and archives with:
+The `logrotate.timer` systemd unit is enabled and runs daily. The rule keeps three compressed rotations. `.gitignore` excludes the active log and archives via `stereo-display.log*`, so the rotated `.1.gz`, `.2.gz`, etc. do not appear as untracked Git files. Verify the active rule, status, and archives with:
 
 ```bash
 cat /etc/logrotate.d/stereo-display
@@ -1335,17 +1342,17 @@ If moving to a small HDMI LCD later, likely changes include:
 14. Install `tronbyt/stereo_now_playing.star` on the separate Mac Pro Tronbyt server and test track updates.
 15. Back up the history database and, for a **fresh installation only**, complete the manual-source SQLite migration and integration documented in `manual_history/README.md`. The existing Pi has already been migrated; do not repeat it during routine deployment.
 16. Install `requirements.txt` in the virtual environment (including Flask and Waitress), then create `~/.config/stereo-manual-history.env` with mode `600` and populated secret key, Werkzeug password hash, and Discogs token.
-17. Test a manually entered song and an album submission; verify SQLite, `now_playing.json`, artwork, and Tronbyt. Confirm Select all/none and single-track Now Playing auto-selection.
+17. Test a manually entered song and an album submission; verify SQLite, `now_playing.json`, artwork, and Tronbyt. Confirm master-only Discogs search, direct specific-release lookup, album Select all/none, and single-track Now Playing auto-selection. Back up SQLite, then verify the History view can select one or multiple entries, confirm deletion, and leave Tronbyt Now Playing unchanged.
 18. Verify automatic handoff: manual entry stays visible during failed ACRCloud matches, then yields to the next successful analog/BluOS publication. Check duplicate suppression when the same track is subsequently recognized.
 19. Install and enable `stereo-manual-history.service`; verify authenticated access from another device on the home LAN and that the service starts after reboot. Do not port-forward ports 8765 or 8766.
-20. Verify `/etc/logrotate.d/stereo-display` includes `su spieg16 spieg16`, and check the active daily logrotate timer and archives.
+20. Verify `/etc/logrotate.d/stereo-display` includes `su spieg16 spieg16`, and check the active daily logrotate timer and archives. Confirm `.gitignore` contains `stereo-display.log*` so rotated archives stay out of Git.
 
 ## Current Backlog / Future Enhancements
 
 Possible future improvements:
 
 - Cache Spotify metadata corrections by normalized artist/title to reduce repeated Spotify searches.
-- Improve the existing manual-history interface with better Discogs search ranking and deduplication of pressings; manual song/album logging is already implemented.
+- Consider more refined ranking of Discogs **master-release** results if searches remain noisy. Master-only search, manual song/album logging, and bulk deletion from recent history are already implemented.
 - Further improve release-selection heuristics for recordings that appear on multiple legitimate releases, especially where Spotify dates or archival releases make the canonical album ambiguous.
 - Add automated regression tests for studio-album selection (New York Dolls), competing live albums (Neil Young), album continuity, protected-recording suppression, and artwork fallback validation.
 - Improve canonical artist/title stabilization for recordings with legitimate multi-credit artist variants (for example Frank Zappa / The Mothers Of Invention) and minor title differences such as a leading `The`, without weakening general artist matching.
