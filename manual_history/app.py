@@ -231,25 +231,22 @@ def submit():
         abort(400, 'Invalid local time')
     if started > int(time.time()) + 60:
         abort(400, 'Future listening history is not supported')
-    # For an album, the timestamp refers to the first selected track. Calculate
-    # subsequent starts only where the preceding track duration is known.
+    # The timestamp is the start of the last selected track (or now).
+    # Work backward using each preceding selected track's duration.
     durations=request.form.getlist('duration')
-    times=[]
-    index_map={int(v):i for i,v in enumerate(selected)}
+    times=[started] * len(selected)
     cursor=started
-    for raw in selected:
-        idx=int(raw)
-        times.append(cursor)
+    for i in range(len(selected) - 2, -1, -1):
+        idx=int(selected[i])
         dur=durations[idx].strip() if idx < len(durations) else ''
         parts=dur.split(':')
         if len(parts) in (2,3) and all(x.isdecimal() for x in parts):
             seconds=0
             for x in parts: seconds=seconds*60+int(x)
-            cursor += seconds
-        else:
-            # Leave subsequent timestamps at current known boundary. The UI
-            # warns that exact sequencing is impossible with unknown durations.
-            pass
+            cursor -= seconds
+        # Without a duration, keep the previous known boundary. The UI
+        # warns that missing durations make estimated starts approximate.
+        times[i]=cursor
     if not request.form.get('confirm_duplicates'):
         duplicates=duplicate_candidates(tracks, times)
         if duplicates:
