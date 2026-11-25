@@ -21,7 +21,7 @@ An authenticated LAN-only web interface to log complete Discogs album tracklists
 - A manually selected track stays displayed while analog recognition fails. A newly recognized analog track or changed BluOS playback automatically takes over without user intervention. Existing SQLite logging and recognition continue.
 - Recent history shows up to 30 entries and supports Select all, Select none, and deletion of selected rows from any source. Deletion requires confirmation, changes only SQLite history (not the active Tronbyt Now Playing snapshot), and is permanent.
 - History entries use `source=manual`. The database is the original SQLite history database, not a second storage system.
-- Discogs track durations produce approximate sequential timestamps. If durations are unavailable, timestamps may be identical or approximate; review them. The supplied timestamp is interpreted in the Pi's local timezone.
+- For album logging, the supplied timestamp is when the **last selected track started** (or the current time if left blank), matching Open Scrobbler. Earlier selected tracks are timestamped **backward** using their Discogs durations; missing durations can make those earlier start times approximate or identical. The supplied time is interpreted in the Pi's local timezone. Single-song logging is unchanged.
 - A +/-10 minute duplicate warning is provided for the same artist/title. The user can explicitly allow duplicates.
 - Album covers are downloaded from approved Discogs image hosts; manual song entry currently publishes without artwork. The existing Tronbyt client will display its placeholder for a missing image.
 - History is not automatically deleted or rewritten by releasing manual Now Playing.
