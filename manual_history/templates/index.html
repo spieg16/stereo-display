@@ -1,1 +1,62 @@
-{% extends 'base.html' %}{% block content %}<div class="panel"><h3>Search Discogs</h3><form action="{{url_for('search')}}" class="row"><input class="grow" type="text" name="q" required placeholder="Artist, album, or Discogs release URL"><button>Search albums</button></form><p class="muted small">For a single song, use <a href="{{url_for('song')}}">manual song entry</a>.</p></div><div class="panel"><h3>Now Playing</h3><p class="muted">Manual entries update Tronbyt immediately. The next successfully recognized analog track or new BluOS playback automatically takes over.</p></div><h3>Recent listening history</h3><div class="panel"><table><tr><th>Track</th><th>Source</th><th>Played</th></tr>{% for p in plays %}<tr><td>{{p.artist}} · {{p.title}}<div class="muted small">{{p.album or ''}}</div></td><td>{{p.source}}</td><td>{{p.started_at | int | datetime_local}}</td></tr>{% else %}<tr><td colspan="3">No history yet</td></tr>{% endfor %}</table></div>{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<div class="panel">
+  <h3>Search Discogs masters</h3>
+  <form action="{{ url_for('search') }}" class="row">
+    <input class="grow" type="text" name="q" required placeholder="Artist, album, or Discogs master/release URL">
+    <button>Search albums</button>
+  </form>
+  <p class="muted small">Results show master releases, not individual pressings. You can still paste a specific Discogs release URL. For a single song, use <a href="{{ url_for('song') }}">manual song entry</a>.</p>
+</div>
+<div class="panel">
+  <h3>Now Playing</h3>
+  <p class="muted">Manual entries update Tronbyt immediately. The next successfully recognized analog track or new BluOS playback automatically takes over.</p>
+</div>
+<h3>Recent listening history</h3>
+<div class="panel">
+  <form method="post" action="{{ url_for('delete_history') }}" id="history-delete-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if plays %}
+    <div class="row" style="margin-bottom:12px">
+      <button type="button" id="history-select-all">Select all</button>
+      <button type="button" id="history-select-none">Select none</button>
+      <button type="submit" id="history-delete" disabled>Delete selected</button>
+      <small id="history-selection-count" aria-live="polite">0 selected</small>
+    </div>
+    {% endif %}
+    <table>
+      <tr><th scope="col">Select</th><th scope="col">Track</th><th scope="col">Source</th><th scope="col">Played</th></tr>
+      {% for p in plays %}
+      <tr>
+        <td><input type="checkbox" name="play_ids" value="{{ p.id }}" aria-label="Select {{ p.artist }} - {{ p.title }}"></td>
+        <td>{{ p.artist }} · {{ p.title }}<div class="muted small">{{ p.album or '' }}</div></td>
+        <td>{{ p.source }}</td>
+        <td>{{ p.started_at | int | datetime_local }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No history yet</td></tr>
+      {% endfor %}
+    </table>
+  </form>
+</div>
+<script>
+  const historyForm = document.getElementById('history-delete-form');
+  const historyBoxes = Array.from(historyForm.querySelectorAll('input[name="play_ids"]'));
+  const historyDelete = document.getElementById('history-delete');
+  const historyCount = document.getElementById('history-selection-count');
+  function updateHistorySelection() {
+    const count = historyBoxes.filter(box => box.checked).length;
+    if (historyDelete) historyDelete.disabled = count === 0;
+    if (historyCount) historyCount.textContent = count + ' selected';
+  }
+  historyBoxes.forEach(box => box.addEventListener('change', updateHistorySelection));
+  const all = document.getElementById('history-select-all');
+  const none = document.getElementById('history-select-none');
+  if (all) all.addEventListener('click', () => {historyBoxes.forEach(box => box.checked = true); updateHistorySelection();});
+  if (none) none.addEventListener('click', () => {historyBoxes.forEach(box => box.checked = false); updateHistorySelection();});
+  historyForm.addEventListener('submit', event => {
+    const count = historyBoxes.filter(box => box.checked).length;
+    if (!count || !confirm('Permanently delete ' + count + ' selected listening history entr' + (count === 1 ? 'y?' : 'ies?'))) event.preventDefault();
+  });
+</script>
+{% endblock %}

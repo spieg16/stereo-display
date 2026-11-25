@@ -77,3 +77,16 @@ def add_manual_plays(tracks,timestamps):
 
 def release_override():
     OVERRIDE.unlink(missing_ok=True)
+
+
+def delete_plays(ids):
+    """Delete only explicitly selected history row IDs, including analog/BluOS rows.
+
+    Does not modify the published now-playing snapshot or manual override.
+    """
+    if not ids or len(ids) > 30 or any(type(value) is not int or value <= 0 for value in ids):
+        raise ValueError('Invalid history IDs')
+    placeholders = ','.join('?' for _ in ids)
+    with sqlite3.connect(DB, timeout=15) as con:
+        cursor = con.execute(f'DELETE FROM plays WHERE id IN ({placeholders})', ids)
+        return cursor.rowcount

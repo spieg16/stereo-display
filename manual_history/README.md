@@ -15,10 +15,11 @@ An authenticated LAN-only web interface to log complete Discogs album tracklists
 
 ## Behavior
 
-- Search Discogs by album or artist, or paste a release URL or numeric release ID.
+- Search Discogs master releases by album or artist (one result per master instead of individual pressings). Paste a Discogs master URL for a master tracklist, or a specific release URL/numeric release ID when needed.
 - Select whole album, one side, selected tracks, or a single manually entered song.
 - Album submissions always publish the selected **Now Playing** radio-button track. Single-song submissions publish that song. This is mandatory, not an optional checkbox.
-- Explicit override persists across Pi restarts, and suppresses automatic snapshot writes. To return control to BluOS/analog, click **Return control to automatic playback**. Existing SQLite logging and track recognition continue. After release, the next genuinely new automatic metadata publication updates Tronbyt; it may not update instantly if the player has not changed tracks.
+- A manually selected track stays displayed while analog recognition fails. A newly recognized analog track or changed BluOS playback automatically takes over without user intervention. Existing SQLite logging and recognition continue.
+- Recent history shows up to 30 entries and supports Select all, Select none, and deletion of selected rows from any source. Deletion requires confirmation, changes only SQLite history (not the active Tronbyt Now Playing snapshot), and is permanent.
 - History entries use `source=manual`. The database is the original SQLite history database, not a second storage system.
 - Discogs track durations produce approximate sequential timestamps. If durations are unavailable, timestamps may be identical or approximate; review them. The supplied timestamp is interpreted in the Pi's local timezone.
 - A +/-10 minute duplicate warning is provided for the same artist/title. The user can explicitly allow duplicates.
@@ -27,8 +28,8 @@ An authenticated LAN-only web interface to log complete Discogs album tracklists
 
 ## Tests before routine use
 
-Check the migration, add a single manual song, inspect `now_playing.json`, ensure Tronbyt reflects it, switch or poll BluOS and verify it **does not** overwrite the manual entry, release override, then play a *new* BluOS track and verify automatic publishing resumes. Check an analog recording and the existing local SQLite triggers afterward. The system has not been tested on your Pi; preserve the database backup until these checks pass.
+Check the migration, add a single manual song, inspect `now_playing.json`, and ensure Tronbyt reflects it. Failed recognition should leave the manual track displayed; a newly recognized analog track or changed BluOS playback should take over automatically. Check an analog recording and the existing local SQLite triggers afterward. The system has not been tested on your Pi; preserve the database backup until these checks pass.
 
 ## Known limitations
 
-This first version focuses on safe additive entry. It does not yet support editing or deleting previously logged tracks, automatic track-by-track cycling on Tronbyt, or a read-only correction preview before submit. Discogs search requires an API token and internet access. On rare submission failures, now-playing and SQLite writes are not one atomic transaction; inspect both before retrying.
+This first version focuses on safe additive entry. It does not yet support editing previously logged tracks, automatic track-by-track cycling on Tronbyt, or a read-only correction preview before submit. Discogs search requires an API token and internet access. On rare submission failures, now-playing and SQLite writes are not one atomic transaction; inspect both before retrying.

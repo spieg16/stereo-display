@@ -1,1 +1,15 @@
-{% extends 'base.html' %}{% block content %}<h3>Albums matching “{{query}}”</h3><div class="grid">{% for r in results %}<a class="panel card" href="{{url_for('release', release_id=r.id)}}">{% if r.thumb %}<img alt="" src="{{r.thumb}}">{% endif %}<strong>{{r.title}}</strong><p class="muted">{{r.year or ''}}</p></a>{% else %}<p>No results. You can also paste a Discogs release URL into search.</p>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<h3>Master albums matching “{{ query }}”</h3>
+<div class="grid">
+{% for r in results %}
+<a class="panel card" href="{{ url_for('master', master_id=r.id) }}">
+  {% if r.thumb %}<img alt="" src="{{ r.thumb }}">{% endif %}
+  <strong>{{ r.title }}</strong>
+  <p class="muted">{{ r.year or '' }} · Master release</p>
+</a>
+{% else %}
+<p>No master releases found. You can also paste a Discogs master or release URL into search.</p>
+{% endfor %}
+</div>
+{% endblock %}

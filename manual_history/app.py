@@ -15,7 +15,7 @@ from io import BytesIO
 from werkzeug.security import check_password_hash
 
 from now_playing_state import publish_now_playing
-from manual_history.store import add_manual_plays, recent_plays, duplicate_candidates
+from manual_history.store import add_manual_plays, recent_plays, duplicate_candidates, delete_plays
 
 APP = Flask(__name__)
 APP.secret_key = os.environ.get('MANUAL_HISTORY_SECRET_KEY', '')
@@ -71,15 +71,16 @@ def discogs(path, params=None):
     return r.json()
 
 
-def parse_release_id(value):
+def parse_discogs_id(value):
     value = (value or '').strip()
+    # Numeric IDs continue to mean individual releases for backward compatibility.
     if value.isdecimal():
-        return int(value)
-    match = re.fullmatch(r'https?://(?:www\.)?discogs\.com/(?:[^/]+/)?release/(\d+)(?:-[^/?#]*)?/?(?:\?.*)?', value)
-    if not match:
-        # Discogs also uses /release/123456-Title (without a locale).
-        match = re.search(r'discogs\.com/(?:[a-z]{2}_[A-Z]{2}/)?release/(\d+)(?:[/?#-]|$)', value)
-    return int(match.group(1)) if match else None
+        return ('release', int(value))
+    match = re.fullmatch(
+        r'https?://(?:www\.)?discogs\.com/(?:[a-z]{2}_[A-Z]{2}/)?(master|release)/(\d+)(?:-[^/?#]*)?/?(?:\?.*)?(?:#.*)?',
+        value, flags=re.IGNORECASE,
+    )
+    return (match.group(1).lower(), int(match.group(2))) if match else None
 
 
 def display_artist(artists):
@@ -116,16 +117,30 @@ def search():
     query = request.args.get('q','').strip()[:120]
     if not query:
         return redirect(url_for('index'))
-    release_id = parse_release_id(query)
-    if release_id:
-        return redirect(url_for('release', release_id=release_id))
+    direct = parse_discogs_id(query)
+    if direct:
+        kind, discogs_id = direct
+        return redirect(url_for('master', master_id=discogs_id) if kind == 'master'
+                        else url_for('release', release_id=discogs_id))
     try:
-        data = discogs('/database/search', {'q': query, 'type':'release', 'per_page': 15})
-        results = [r for r in data.get('results',[]) if r.get('id')]
+        data = discogs('/database/search', {'q': query, 'type':'master', 'per_page': 25})
+        results = [r for r in data.get('results',[]) if r.get('id') and r.get('type') == 'master']
     except requests.RequestException:
         flash('Discogs search failed. Check your API token, connection or rate limit.')
         results=[]
     return render_template('search.html', query=query, results=results)
+
+
+@APP.get('/master/<int:master_id>')
+def master(master_id):
+    try:
+        data = discogs(f'/masters/{master_id}')
+    except requests.RequestException:
+        flash('Could not load master release from Discogs.')
+        return redirect(url_for('index'))
+    artist = display_artist(data.get('artists'))
+    tracks = flatten_tracks(data.get('tracklist'), artist)
+    return render_template('release.html', release=data, artist=artist, tracks=tracks, discogs_kind='master')
 
 
 @APP.get('/release/<int:release_id>')
@@ -137,7 +152,20 @@ def release(release_id):
         return redirect(url_for('index'))
     artist = display_artist(data.get('artists'))
     tracks = flatten_tracks(data.get('tracklist'), artist)
-    return render_template('release.html', release=data, artist=artist, tracks=tracks)
+    return render_template('release.html', release=data, artist=artist, tracks=tracks, discogs_kind='release')
+
+
+@APP.post('/history/delete')
+def delete_history():
+    ids = request.form.getlist('play_ids')
+    if not ids:
+        flash('Select at least one history entry to delete.')
+        return redirect(url_for('index'))
+    if len(ids) > 30 or len(set(ids)) != len(ids) or any(not value.isdecimal() or not 0 < int(value) < 2**63 for value in ids):
+        abort(400, 'Invalid history selection')
+    count = delete_plays([int(value) for value in ids])
+    flash(f'Deleted {count} listening history entr' + ('y.' if count == 1 else 'ies.'))
+    return redirect(url_for('index'))
 
 
 @APP.get('/song')
